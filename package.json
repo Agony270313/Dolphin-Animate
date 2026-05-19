@@ -1,0 +1,54 @@
+{
+  "name": "dolphin-animate",
+  "version": "1.7.9",
+  "description": "Adobe Animate benzeri animasyon uygulaması",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --publish=never",
+    "build:publish": "electron-builder --publish=always"
+  },
+  "build": {
+    "appId": "dolphin-animate.app",
+    "productName": "Dolphin Animate",
+    "directories": {
+      "output": "C:/Users/tclpi/AppData/Local/Temp/opencode/dolphin-dist"
+    },
+    "icon": "icon.ico",
+    "files": [
+      "main.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "package.json",
+      "icon.ico",
+      "!node_modules/**/ffmpeg.dll"
+    ],
+    "extraFiles": [
+      "node_modules/electron/dist/ffmpeg.dll"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Agony270313",
+      "repo": "Dolphin-Animate"
+    }
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-packager": "^17.1.2"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3",
+    "gif.js": "^0.2.0"
+  }
+}

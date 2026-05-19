@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dolphin Animate</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Top Bar -->
+  <div id="top-bar">
+    <div class="top-bar-group">
+      <button id="new-project" title="New Project (Ctrl+N)">📄</button>
+      <button id="open-project" title="Open (Ctrl+O)">📂</button>
+      <button id="save-project" title="Save (Ctrl+S)">💾</button>
+    </div>
+    <div class="top-bar-group">
+      <button id="undo-btn" title="Undo (Ctrl+Z)">↩</button>
+      <button id="redo-btn" title="Redo (Ctrl+Y)">↪</button>
+    </div>
+    <div class="top-bar-group" id="top-bar-right">
+      <label class="size-label">Size: <input type="range" id="brush-size" min="1" max="50" value="4"><span id="brush-size-label">4</span></label>
+      <label class="opacity-label">Opacity: <input type="range" id="opacity" min="0" max="100" value="100"></label>
+      <button id="import-btn" title="Import Image (Ctrl+I)">📥</button>
+      <button id="export-btn" title="Export">📤</button>
+      <span id="version-label" title="Version">v1.7.9</span>
+    </div>
+  </div>
+  <div id="tool-panel">
+    <button class="tool-btn active" data-tool="select" title="Select (V)">⬆</button>
+    <button class="tool-btn" data-tool="brush" title="Brush (B)">🖌</button>
+    <button class="tool-btn" data-tool="pencil" title="Pencil (P)">✏</button>
+    <button class="tool-btn" data-tool="eraser" title="Eraser (E)">🧹</button>
+    <button class="tool-btn" data-tool="rect" title="Rectangle (R)">▬</button>
+    <button class="tool-btn" data-tool="circle" title="Ellipse (O)">●</button>
+    <button class="tool-btn" data-tool="line" title="Line (L)">╱</button>
+    <button class="tool-btn" data-tool="pen" title="Pen (A)">✒</button>
+    <button class="tool-btn" data-tool="fill" title="Fill (G)">🪣</button>
+    <button class="tool-btn" data-tool="text" title="Text (T)">🔤</button>
+    <button class="tool-btn" data-tool="guide" title="Motion Guide (M)">🧭</button>
+    <div class="tool-colors">
+      <div class="color-stack">
+        <div class="color-swatch stroke-swatch" id="stroke-swatch" title="Stroke Color" style="background:#000000"></div>
+        <div class="color-swatch fill-swatch" id="fill-swatch" title="Fill Color" style="background:#444444"></div>
+      </div>
+      <input type="color" id="stroke-color" value="#000000" title="Stroke Color">
+      <input type="color" id="fill-color" value="#444444" title="Fill Color">
+    </div>
+  </div>
+  <!-- Main Content -->
+  <div id="main-content">
+    <!-- Center - Canvas -->
+    <div id="canvas-area">
+      <div id="canvas-container">
+        <canvas id="draw-canvas"></canvas>
+        <canvas id="overlay-canvas"></canvas>
+      </div>
+      <div id="canvas-info">
+        <span id="frame-counter">Frame: 1</span>
+        <span id="zoom-level">%100</span>
+        <span id="mouse-coords">X: 0 Y: 0</span>
+        <span id="update-status" style="cursor:pointer" title="Click to restart"></span>
+      </div>
+    </div>
+
+    <!-- Right Panel - Properties (Adobe Animate style) -->
+    <div id="properties-panel">
+      <!-- Tabs -->
+      <div class="pan-tabs">
+        <button class="pan-tab active" data-pan="pan-tool">Tool</button>
+        <button class="pan-tab" data-pan="pan-object">Object</button>
+        <button class="pan-tab" data-pan="pan-frame">Frame</button>
+        <button class="pan-tab" data-pan="pan-doc">Document</button>
+      </div>
+      <!-- Panels -->
+      <div id="pan-tool" class="pan-body active">
+        <div class="pan-section">
+          <div class="pan-section-header" data-collapse="tool-props">
+            <span class="pan-arrow">▼</span><span id="tool-prop-title">Brush</span>
+          </div>
+          <div id="tool-props" class="pan-section-body">
+            <div class="pan-section">
+              <div class="pan-section-header" data-collapse="tool-stroke">
+                <span class="pan-arrow">▼</span><span>Fill and Stroke</span>
+              </div>
+              <div id="tool-stroke" class="pan-section-body">
+                <div class="pan-row"><span class="pan-label">Stroke</span><input type="color" id="pan-stroke-color" value="#000000"></div>
+                <div class="pan-row"><span class="pan-label">Fill</span><input type="color" id="pan-fill-color" value="#444444"><span style="margin-left:auto;font-size:10px;color:#888">—</span></div>
+                <div class="pan-row"><span class="pan-label">Size</span><input type="number" id="prop-size" value="4" min="1" max="100" class="pan-num"></div>
+                <div class="pan-row"><span class="pan-label">Opacity</span><input type="number" id="prop-opacity" value="100" min="0" max="100" class="pan-num"></div>
+              </div>
+            </div>
+            <div class="pan-section">
+              <div class="pan-section-header" data-collapse="tool-options">
+                <span class="pan-arrow">▼</span><span>Options</span>
+              </div>
+              <div id="tool-options" class="pan-section-body">
+                <div class="pan-row"><span class="pan-label">Smoothness</span><input type="number" id="prop-smoothness" value="0" min="0" max="100" class="pan-num"></div>
+                <div class="pan-row"><span class="pan-label">Spacing</span><input type="number" id="prop-spacing" value="0" min="0" max="20" class="pan-num"></div>
+                <label class="pan-check"><input type="checkbox" id="prop-pressure"> Pressure</label>
+                <div id="pressure-settings" style="display:none;padding-left:12px;margin-top:4px">
+                  <div class="pan-row"><span class="pan-label">Curve</span><select id="prop-pressure-curve" class="pan-num" style="width:auto;padding:1px 4px;font-size:11px"><option value="soft">Soft</option><option value="linear">Linear</option><option value="hard">Hard</option><option value="custom">Custom</option></select></div>
+                  <div class="pan-row" id="pressure-exp-row" style="display:none"><span class="pan-label">Power</span><input type="range" id="prop-pressure-exp" min="2" max="50" value="20" class="pan-num" style="width:60px"><span id="pressure-exp-label">2.0</span></div>
+                  <div class="pan-row"><span class="pan-label">Min</span><input type="range" id="prop-pressure-min" min="0" max="50" value="0" class="pan-num" style="width:60px"><span id="pressure-min-label">0%</span></div>
+                </div>
+                <label class="pan-check"><input type="checkbox" id="prop-merge" checked> Auto-Merge</label>
+                <label class="pan-check"><input type="checkbox" id="prop-auto-smooth"> Auto-Smooth</label>
+                <label class="pan-check"><input type="checkbox" id="prop-pixel-snap"> Pixel Snap</label>
+                <div class="pan-row" style="display:none"><span class="pan-label">Tolerance</span><input type="number" id="prop-tolerance" value="203.5" class="pan-num"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="pan-object" class="pan-body" style="display:none">
+        <div id="obj-empty" class="pan-empty">Select an object to edit its properties</div>
+        <div class="pan-section">
+          <div class="pan-section-header">
+            <span class="pan-obj-icon">⧉</span><span>Drawing Object</span>
+          </div>
+          <div class="pan-section-body">
+            <div id="align-btns" class="obj-align">
+              <button id="align-left" title="Align Left">⊣</button>
+              <button id="align-center-h" title="Align Center">⬚</button>
+              <button id="align-right" title="Align Right">⊢</button>
+              <button id="align-top" title="Align Top">⊤</button>
+              <button id="align-center-v" title="Align Middle">⊥</button>
+              <button id="align-bottom" title="Align Bottom">⊥</button>
+            </div>
+          </div>
+        </div>
+        <!-- Position and Size -->
+        <div class="pan-section">
+          <div class="pan-section-header">
+            <span class="pan-arrow">▼</span><span>Position and Size</span>
+          </div>
+          <div class="pan-section-body">
+            <div class="obj-row">
+              <div class="obj-field"><span class="obj-label">W</span><input type="number" id="obj-w" value="0" step="0.01" class="obj-num"></div>
+              <div class="obj-field"><span class="obj-label">X</span><input type="number" id="obj-x" value="0" step="0.01" class="obj-num"></div>
+            </div>
+            <div class="obj-row" style="justify-content:center;padding:1px 0">
+              <button id="obj-lock" class="obj-iconbtn" title="Constrain proportions">🔓</button>
+            </div>
+            <div class="obj-row">
+              <div class="obj-field"><span class="obj-label">H</span><input type="number" id="obj-h" value="0" step="0.01" class="obj-num"></div>
+              <div class="obj-field"><span class="obj-label">Y</span><input type="number" id="obj-y" value="0" step="0.01" class="obj-num"></div>
+            </div>
+          </div>
+        </div>
+        <!-- Color and Style -->
+        <div class="pan-section">
+          <div class="pan-section-header">
+            <span class="pan-arrow">▼</span><span>Color and Style</span>
+          </div>
+          <div class="pan-section-body">
+            <div class="obj-row">
+              <div class="obj-fillrow">
+                <span class="obj-swatch" id="obj-fill-swatch" style="background:#444">■</span>
+                <span class="obj-field-label">Fill</span>
+                <div class="obj-opacity-slider">
+                  <div class="obj-track" id="obj-fill-opacity-track"><div class="obj-thumb" id="obj-fill-opacity-thumb" style="left:100%"></div></div>
+                </div>
+                <span class="obj-pct" id="obj-fill-opacity-pct">100%</span>
+              </div>
+            </div>
+            <div class="obj-row">
+              <div class="obj-fillrow">
+                <span class="obj-swatch" id="obj-stroke-swatch" style="background:#000">▦</span>
+                <span class="obj-field-label">Stroke</span>
+                <div class="obj-opacity-slider">
+                  <div class="obj-track" id="obj-stroke-opacity-track"><div class="obj-thumb" id="obj-stroke-opacity-thumb" style="left:0%"></div></div>
+                </div>
+                <span class="obj-pct" id="obj-stroke-opacity-pct">0%</span>
+              </div>
+            </div>
+            <div class="obj-row" style="margin-top:2px">
+              <span class="obj-sub-label">Stroke size</span>
+            </div>
+            <div class="obj-row">
+              <input type="range" id="obj-stroke-size" value="1" min="0" max="200" class="obj-range">
+            </div>
+            <div class="obj-row" style="gap:4px">
+              <span class="obj-sub-label">Style</span>
+              <select id="obj-stroke-style" class="obj-select"><option>──────────</option></select>
+              <button class="obj-iconbtn-sm" title="Edit stroke style">…</button>
+            </div>
+            <div class="obj-row" style="gap:4px">
+              <span class="obj-sub-label">Width</span>
+              <select id="obj-stroke-width" class="obj-select"><option>═══════════</option></select>
+              <button class="obj-iconbtn-sm" title="Edit stroke width">…</button>
+            </div>
+            <div class="obj-row" style="gap:4px">
+              <span class="obj-sub-label">Scale</span>
+              <select id="obj-stroke-scale" class="obj-select" style="flex:1"><option>Normal</option></select>
+            </div>
+            <label class="obj-check"><input type="checkbox" id="obj-hinting"> Hinting</label>
+            <div class="obj-row" style="gap:3px;margin-top:3px">
+              <button class="obj-capbtn" title="None">▌</button>
+              <button class="obj-capbtn" title="Round">⊂</button>
+              <button class="obj-capbtn" title="Square">■</button>
+              <span style="color:#555;margin:0 2px">|</span>
+              <button class="obj-capbtn" title="Miter join">⌜</button>
+              <button class="obj-capbtn" title="Round join">◠</button>
+              <button class="obj-capbtn" title="Bevel join">▤</button>
+            </div>
+            <div class="obj-row" style="margin-top:3px">
+              <span class="obj-sub-label">Miter</span>
+              <input type="number" id="obj-miter" value="3" min="0" max="100" class="obj-num" style="width:44px">
+            </div>
+          </div>
+        </div>
+        <!-- Shape Options -->
+        <div class="pan-section">
+          <div class="pan-section-header">
+            <span class="pan-arrow">▼</span><span>Shape Options</span>
+          </div>
+          <div class="pan-section-body">
+            <div class="obj-row" style="gap:4px">
+              <button class="obj-actionbtn" id="obj-straighten">⚡ Straighten</button>
+              <button class="obj-actionbtn" id="obj-smooth">S Smooth</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="pan-frame" class="pan-body" style="display:none">
+        <div class="pan-section">
+          <div class="pan-section-header" data-collapse="frame-settings">
+            <span class="pan-arrow">▼</span><span>Frame</span>
+          </div>
+          <div id="frame-settings" class="pan-section-body">
+            <label class="pan-check"><input type="checkbox" id="prop-onion"> Onion Skin</label>
+            <div class="pan-row"><span class="pan-label">Opacity</span><input type="number" id="prop-onion-opacity" value="20" min="5" max="80" class="pan-num"><span id="prop-onion-opacity-label">20%</span></div>
+            <div class="pan-row"><span class="pan-label">Frames</span><input type="number" id="prop-onion-frames" value="1" min="1" max="10" class="pan-num"></div>
+          </div>
+        </div>
+      </div>
+      <div id="pan-doc" class="pan-body" style="display:none">
+        <!-- Document info bar -->
+        <div class="pan-docbar"><span class="pan-docname">Dolphin Animate</span><span class="pan-doctype">Document</span></div>
+        <div class="pan-section">
+          <div class="pan-section-header" data-collapse="doc-settings">
+            <span class="pan-arrow">▼</span><span>Document Settings</span>
+          </div>
+          <div id="doc-settings" class="pan-section-body">
+            <div class="pan-row"><span class="pan-label">W</span><input type="number" id="canvas-width" value="800" min="1" class="pan-num"><button id="pan-lock" class="pan-iconbtn" title="Lock aspect ratio">🔓</button><button id="pan-match" class="pan-btn">Match</button></div>
+            <div class="pan-row"><span class="pan-label">H</span><input type="number" id="canvas-height" value="600" min="1" class="pan-num"></div>
+            <div class="pan-row"><span class="pan-label">Stage</span><input type="color" id="canvas-bg-color" value="#ffffff"></div>
+            <div class="pan-row"><span class="pan-label">FPS</span><input type="number" id="fps-input" value="12" min="1" max="120" class="pan-num"></div>
+            <label class="pan-check"><input type="checkbox" id="loop-toggle" checked> Loop</label>
+            <label class="pan-check"><input type="checkbox" id="pan-scale-content"> Scale Content</label>
+            <div class="pan-row"><span class="pan-label">Bg Image</span><button id="bg-img-btn" class="pan-btn">Browse…</button></div>
+            <div class="pan-row" id="pan-bgimg-row" style="display:none"><span class="pan-label"></span><button id="bg-img-remove" class="pan-btn">Remove</button></div>
+            <button id="resize-canvas" class="pan-action">Apply Changes</button>
+          </div>
+        </div>
+        <div class="pan-section">
+          <div class="pan-section-header collapsed" data-collapse="publish-settings">
+            <span class="pan-arrow">▶</span><span>Publish Settings</span>
+          </div>
+          <div id="publish-settings" class="pan-section-body" style="display:none">
+            <div class="pan-row"><span class="pan-label">Profile</span><select class="pan-select"><option>Default</option></select></div>
+            <button class="pan-action">More settings…</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Panel - Timeline (Adobe Animate style) -->
+  <div id="timeline-panel">
+    <div id="timeline-tabs">
+      <span class="tl-tab active">Timeline</span>
+      <span class="tl-tab">Output</span>
+    </div>
+    <div id="timeline-main">
+      <div id="timeline-left">
+        <div id="tl-layer-toolbar">
+          <button id="tl-add-layer" title="New Layer (Shift+Ctrl+N)"></button>
+          <button id="tl-add-folder" title="New Folder"></button>
+          <button id="tl-del-layer" title="Delete Layer"></button>
+        </div>
+        <div id="tl-layer-list"></div>
+      </div>
+      <div id="timeline-right">
+        <div id="tl-frame-toolbar">
+          <span id="tl-fps-display">12.00 FPS</span>
+          <span id="tl-frame-num">1 <sup>F</sup></span>
+          <span class="tl-toolbar-sep"></span>
+          <button id="tl-first-frame" title="First Frame"></button>
+          <button id="tl-prev-keyframe" title="Previous Keyframe"></button>
+          <button id="tl-step-back" title="Previous Frame"></button>
+          <button id="tl-play-btn" title="Play/Pause (Space)"></button>
+          <button id="tl-step-forward" title="Next Frame"></button>
+          <button id="tl-next-keyframe" title="Next Keyframe"></button>
+          <button id="tl-last-frame" title="Last Frame"></button>
+          <span class="tl-toolbar-sep"></span>
+          <button id="tl-onion-btn" title="Onion Skin"></button>
+          <button id="tl-loop-btn" title="Loop" class="active"></button>
+          <span class="tl-toolbar-sep"></span>
+          <button id="tl-add-frame" title="Add Frame (F5)"></button>
+          <button id="tl-insert-keyframe" title="Insert Keyframe (F7)"></button>
+          <button id="tl-del-frame" title="Delete Frame (Shift+F5)"></button>
+          <button id="tl-tween-btn" title="Generate Tweens (Ctrl+T)"></button>
+          <span class="tl-toolbar-sep"></span>
+          <button id="tl-center-frame" title="Center Frame"></button>
+          <button id="tl-draw-timeline" title="Draw Timeline"></button>
+        </div>
+        <div id="timeline-scroll">
+          <div id="tl-ruler"></div>
+          <div id="tl-frame-rows"></div>
+          <div id="tl-playhead"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Export Modal -->
+  <div id="export-modal" class="modal hidden">
+    <div class="modal-content">
+      <span class="modal-close">&times;</span>
+      <h2>Export</h2>
+      <div class="export-options">
+        <label>Format:</label>
+        <select id="export-format">
+          <option value="png-sequence">PNG Sequence</option>
+          <option value="gif">GIF</option>
+          <option value="webm">WebM Video</option>
+          <option value="sprite-sheet">Sprite Sheet</option>
+        </select>
+        <label>File Name:</label>
+        <input type="text" id="export-filename" value="anim">
+        <label>Frame Range:</label>
+        <div class="range-inputs">
+          <label>Start: <input type="number" id="export-start" value="1" min="1"></label>
+          <label>End: <input type="number" id="export-end" value="1" min="1"></label>
+        </div>
+        <label>Scale: <input type="number" id="export-scale" value="1" min="0.1" max="4" step="0.1"></label>
+        <label>FPS: <input type="number" id="export-fps" value="12" min="1" max="60"></label>
+        <div class="export-buttons">
+          <button id="export-cancel">Cancel</button>
+          <button id="export-start-btn">Export</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context Menu -->
+  <div id="context-menu" class="context-menu hidden">
+    <div class="context-menu-items"></div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
