@@ -598,7 +598,7 @@ function renderFrame(c, fi, sc, noOnion) {
   }
 
   // 2) Onion skin ghosts
-  if (!noOnion && S.onion && !IsolationMode) {
+  if (!noOnion && S.onion) {
     for (let i = 1; i <= S.onionFrames; i++) {
       if (fi - i < 0) break;
       const alpha = S.onionOpacity * (1 - (i - 1) / S.onionFrames);
