@@ -23,7 +23,7 @@
       <label class="opacity-label">Opacity: <input type="range" id="opacity" min="0" max="100" value="100"></label>
       <button id="import-btn" title="Import Image (Ctrl+I)">📥</button>
       <button id="export-btn" title="Export">📤</button>
-      <span id="version-label" title="Version">v1.7.9</span>
+      <span id="version-label" title="Version">v1.9.2</span>
     </div>
   </div>
   <div id="tool-panel">
@@ -38,6 +38,7 @@
     <button class="tool-btn" data-tool="fill" title="Fill (G)">🪣</button>
     <button class="tool-btn" data-tool="text" title="Text (T)">🔤</button>
     <button class="tool-btn" data-tool="guide" title="Motion Guide (M)">🧭</button>
+    <button class="tool-btn" data-tool="camera" title="Camera (C)">📽️</button>
     <div class="tool-colors">
       <div class="color-stack">
         <div class="color-swatch stroke-swatch" id="stroke-swatch" title="Stroke Color" style="background:#000000"></div>
@@ -51,6 +52,10 @@
   <div id="main-content">
     <!-- Center - Canvas -->
     <div id="canvas-area">
+      <div id="isolation-breadcrumb" style="display:none;">
+        <span class="iso-path">Scene 1</span> <span class="iso-sep">&gt;</span> <span id="iso-sym-name">Symbol</span>
+        <button id="iso-exit-btn">Back</button>
+      </div>
       <div id="canvas-container">
         <canvas id="draw-canvas"></canvas>
         <canvas id="overlay-canvas"></canvas>
@@ -71,6 +76,7 @@
         <button class="pan-tab" data-pan="pan-object">Object</button>
         <button class="pan-tab" data-pan="pan-frame">Frame</button>
         <button class="pan-tab" data-pan="pan-doc">Document</button>
+        <button class="pan-tab" data-pan="pan-library">Library</button>
       </div>
       <!-- Panels -->
       <div id="pan-tool" class="pan-body active">
@@ -264,7 +270,22 @@
           </div>
         </div>
       </div>
+      
+      <!-- Library Panel -->
+      <div id="pan-library" class="pan-body" style="display:none">
+        <div class="pan-section">
+          <div class="pan-section-header" style="justify-content: space-between;">
+            <span>Symbols</span>
+            <button id="lib-convert-btn" class="pan-btn" style="padding: 2px 5px; font-size: 11px;">Create (F8)</button>
+          </div>
+          <div id="lib-item-list" class="lib-list">
+            <!-- Items will be injected here -->
+          </div>
+        </div>
+      </div>
     </div>
+  </div>
+
   </div>
 
   <!-- Bottom Panel - Timeline (Adobe Animate style) -->
@@ -279,8 +300,14 @@
           <button id="tl-add-layer" title="New Layer (Shift+Ctrl+N)"></button>
           <button id="tl-add-folder" title="New Folder"></button>
           <button id="tl-del-layer" title="Delete Layer"></button>
+          <button id="tl-add-audio" title="Add Audio Layer (MP3/WAV)" style="margin-left: 10px; display:flex; align-items:center; justify-content:center;"></button>
+          <input type="file" id="audio-input" accept="audio/*" style="display:none">
         </div>
         <div id="tl-layer-list"></div>
+        <div id="tl-audio-label" style="display:none; height: 24px; background: #2a2a2a; border-top: 1px solid #444; border-bottom: 1px solid #444; align-items: center; padding: 0 4px; justify-content: space-between;">
+          <span style="color: #1aaeb0; font-size: 11px; font-weight: bold; display:flex; align-items:center; gap:4px;"><span id="tl-audio-icon-span" style="width:14px;height:14px;display:inline-block"></span> Audio Track</span>
+          <button id="tl-remove-audio" title="Remove Audio" style="background:none; border:none; color:#ff5555; cursor:pointer; padding: 0 4px; display:flex; align-items:center; justify-content:center; width:20px; height:20px;"></button>
+        </div>
       </div>
       <div id="timeline-right">
         <div id="tl-frame-toolbar">
@@ -309,6 +336,9 @@
         <div id="timeline-scroll">
           <div id="tl-ruler"></div>
           <div id="tl-frame-rows"></div>
+          <div id="tl-audio-row" style="display:none; height: 24px; background: #222; border-top: 1px solid #444; border-bottom: 1px solid #444; position: relative;">
+            <div id="tl-audio-clip" style="position: absolute; height: 100%; background: rgba(26, 174, 176, 0.3); border: 1px solid #1aaeb0; display:flex; align-items:center; overflow:hidden;"><span style="color:#1aaeb0; font-size:10px; margin-left:4px; white-space:nowrap;" id="tl-audio-name">audio.mp3</span></div>
+          </div>
           <div id="tl-playhead"></div>
         </div>
       </div>
@@ -325,7 +355,7 @@
         <select id="export-format">
           <option value="png-sequence">PNG Sequence</option>
           <option value="gif">GIF</option>
-          <option value="webm">WebM Video</option>
+          <option value="mp4">MP4 Video</option>
           <option value="sprite-sheet">Sprite Sheet</option>
         </select>
         <label>File Name:</label>
@@ -350,6 +380,6 @@
     <div class="context-menu-items"></div>
   </div>
 
-  <script src="renderer.js"></script>
+  <script type="module" src="/src/renderer.ts"></script>
 </body>
 </html>

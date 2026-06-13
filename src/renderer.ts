@@ -1,34 +1,132 @@
 const { ipcRenderer } = require('electron');
-const $ = id => document.getElementById(id);
-const canvas = $('draw-canvas'), overlay = $('overlay-canvas');
-const ctx = canvas.getContext('2d'), octx = overlay.getContext('2d');
-ctx.imageSmoothingEnabled = true; octx.imageSmoothingEnabled = true;
-ctx.imageSmoothingQuality = 'high'; octx.imageSmoothingQuality = 'high';
+import { $, canvas, overlay, ctx, octx } from './core/DOM';
+import { contours } from 'd3-contour';
 
-let S = {
-  w: 800, h: 600,
-  tool: 'brush',
-  stroke: '#000000', fill: '#444444',
-  size: 4, opacity: 1,
-  layers: [], layerIdx: 0, nextLayerId: 1,
-  frames: [], frameIdx: 0,
-  fps: 12, loop: true, playing: false, onion: false, onionOpacity: 0.2, onionFrames: 1,
-  drawing: false, lx: 0, ly: 0, sx: 0, sy: 0,
-  hist: [], histIdx: -1,
-  curStroke: null,
-  zoom: 1, panX: 0, panY: 0,
-  panning: false, pSX: 0, pSY: 0,
-  bgColor: '#ffffff',
-  bgImg: null, bgImgData: null,
-  selObjs: [], selMode: null, resizeHandle: null, dragOff: null, dragStart: null, selPtIdx: -1,
-  activeLayerId: null, selLayerIds: new Set(),
-  rotateReadyCorner: null, rotateReadyMouse: null,
-  tlDirty: true,
-  smoothness: 0, spacing: 0, pressureSens: false, pressureCurve: 'soft', pressureExp: 2, pressureMin: 0, mergeMode: true,
-  fillTolerance: 203.5,
-  autoSmooth: false, pixelSnap: false,
-};
+window.addEventListener('error', (e) => {
+  alert('CRASH: ' + e.message + '\nAt: ' + e.filename + ':' + e.lineno);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  alert('PROMISE CRASH: ' + e.reason);
+});
 
+import { S, Globals, Symbols, IsolationMode, setIsolationMode } from './core/State';
+import { initAudioUI, renderAudioTimeline, playAudioAtFrame, pauseAudio, loopAudioPlay } from './timeline/AudioLayer';
+
+export let savedState: any = null;
+
+export function enterIsolationMode(symbolId: string, instanceRef?: {layerId: string, idx: number}) {
+  if (IsolationMode) return;
+  if (!Symbols[symbolId]) return;
+  
+  // Find the instance on stage to get its position (for Edit in Place)
+  let instX = S.w / 2, instY = S.h / 2; // default to canvas center
+  if (instanceRef) {
+    const obj = obs(S.frameIdx, instanceRef.layerId)[instanceRef.idx];
+    if (obj) { instX = obj.x || S.w / 2; instY = obj.y || S.h / 2; }
+  } else {
+    // Search for first instance of this symbol
+    for (const l of S.layers) {
+      const objs = obs(S.frameIdx, l.id);
+      for (const o of objs) {
+        if (o.type === 'symbol' && o.symbolId === symbolId) {
+          instX = o.x || S.w / 2; instY = o.y || S.h / 2;
+          break;
+        }
+      }
+    }
+  }
+
+  savedState = {
+    layers: S.layers,
+    frames: S.frames,
+    frameIdx: S.frameIdx,
+    layerIdx: S.layerIdx,
+    selObjs: S.selObjs,
+    panX: S.panX,
+    panY: S.panY,
+    zoom: S.zoom,
+    instX, instY,
+  };
+  setIsolationMode(symbolId);
+  const breadcrumb = $('isolation-breadcrumb');
+  if (breadcrumb) breadcrumb.style.display = 'flex';
+  const symName = $('iso-sym-name');
+  if (symName) symName.innerText = Symbols[symbolId].name;
+  
+  const sym = Symbols[symbolId];
+  
+  // Load symbol frames (multi-frame support)
+  let symFrames: any[];
+  if (sym.frames && sym.frames.length > 0) {
+    // Symbol has saved frames — deep copy them
+    symFrames = sym.frames.map(f => {
+      const objs = (f.children || f.o?.['iso'] || []).map(c => cloneObj(c));
+      // Offset by instance position for Edit in Place
+      for (const c of objs) moveObjBy(c, instX, instY);
+      return { o: { 'iso': objs }, key: f.key !== undefined ? f.key : true, _hist: [], _histIdx: -1 };
+    });
+  } else {
+    // Legacy: single children array
+    const children = (sym.children || []).map(c => cloneObj(c));
+    for (const c of children) moveObjBy(c, instX, instY);
+    symFrames = [{ o: { 'iso': children }, key: true, _hist: [], _histIdx: -1 }];
+  }
+  
+  S.layers = [ { id: 'iso', name: 'Symbol', vis: true, lock: false, col: '#1aaeb0' } ];
+  S.layerIdx = 0;
+  S.frames = symFrames;
+  S.frameIdx = 0;
+  S.selObjs = [];
+  
+  setActiveLayerByIndex(0);
+  updateTL();
+  dirtyCache(); fullRender(); drawSelection();
+}
+
+export function exitIsolationMode() {
+  if (!savedState) return;
+  
+  // Save ALL frames back to symbol (un-offset by instance position)
+  const symId = IsolationMode;
+  if (symId && Symbols[symId]) {
+    const ix = savedState.instX || 0;
+    const iy = savedState.instY || 0;
+    
+    const savedFrames = S.frames.map(f => {
+      const objs = (f.o?.['iso'] || []).map(c => cloneObj(c));
+      for (const c of objs) moveObjBy(c, -ix, -iy);
+      return { children: objs, key: f.key };
+    });
+    
+    Symbols[symId].frames = savedFrames;
+    // Keep children as first frame for backward compat & thumbnail
+    Symbols[symId].children = savedFrames[0]?.children || [];
+  }
+  
+  setIsolationMode(null);
+  const breadcrumb = $('isolation-breadcrumb');
+  if (breadcrumb) breadcrumb.style.display = 'none';
+  
+  S.layers = savedState.layers;
+  S.frames = savedState.frames;
+  S.frameIdx = savedState.frameIdx;
+  S.layerIdx = savedState.layerIdx;
+  S.panX = savedState.panX;
+  S.panY = savedState.panY;
+  S.zoom = savedState.zoom;
+  S.selObjs = [];
+  savedState = null;
+  
+  if (typeof applyZoom === 'function') applyZoom();
+  setActiveLayerByIndex(S.layerIdx);
+  updateTL();
+  refreshLibrary();
+  dirtyCache(); fullRender(); drawSelection();
+}
+
+if ($('iso-exit-btn')) {
+  $('iso-exit-btn').onclick = exitIsolationMode;
+}
 // Pen tool path state
 let _penPath = null; // { anchors: [{x, y, cpX?, cpY?}], closed: false }
 
@@ -80,12 +178,30 @@ function m2b(e) {
   const bs = bufScale();
   let x = (e.clientX - r.left) * (canvas.width / r.width) / bs;
   let y = (e.clientY - r.top) * (canvas.height / r.height) / bs;
+  
+  const f = S.frames[S.frameIdx];
+  if (f && f.cam) {
+    const cx = S.w / 2, cy = S.h / 2;
+    x -= cx; y -= cy;
+    x /= f.cam.zoom; y /= f.cam.zoom;
+    const rad = -f.cam.rotation * Math.PI / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const nx = x * cos - y * sin;
+    const ny = x * sin + y * cos;
+    x = nx + cx - f.cam.x;
+    y = ny + cy - f.cam.y;
+  }
+
   if (S.pixelSnap) { x = Math.round(x); y = Math.round(y); }
   return { x, y };
 }
 
 // ---- Frame / Layer helpers ----
-function L() { return S.layers[S.layerIdx]; }
+function L() { 
+  if (IsolationMode) return { id: 'iso', name: 'Symbol', visible: true, locked: false, opacity: 1 };
+  return S.layers[S.layerIdx]; 
+}
 function F(i) { if (i === undefined) i = S.frameIdx; if (!S.frames[i]) S.frames[i] = { o: {}, key: true, _hist: [], _histIdx: -1 }; return S.frames[i]; }
 function obs(fi, li) { const f = F(fi); if (!f.o[li]) f.o[li] = []; return f.o[li]; }
 function getActiveLayerId() { const l = L(); return l ? l.id : null; }
@@ -134,7 +250,7 @@ function getMultiBounds() {
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 }
 
-function mkFrame() { return { o: {}, key: true, _hist: [], _histIdx: -1 }; }
+function mkFrame() { return { o: {}, key: true, cam: { x: 0, y: 0, zoom: 1, rotation: 0 }, _hist: [], _histIdx: -1 }; }
 function mkLayer(name) {
   const id = S.nextLayerId++;
   return { id, name, vis: true, lock: false, col: `hsl(${(id * 60) % 360}, 60%, 50%)` };
@@ -257,109 +373,208 @@ function drawFill(c, fc, opacity) {
 }
 
 function renderFrame(c, fi, sc, noOnion) {
-  const drawLayer = (ctx, fi, sc, layerId, baseAlpha = 1) => {
-    if (sc !== 1) { ctx.save(); ctx.scale(sc, sc); }
-    const f = S.frames[fi];
-    if (!f) { if (sc !== 1) ctx.restore(); return; }
-    const l = S.layers.find(l => l.id === layerId);
-    if (!l || !l.vis) { if (sc !== 1) ctx.restore(); return; }
+  const drawLayer = (ctx, fi, sc, layerId, baseAlpha = 1, customFrames = S.frames, customLayers = S.layers) => {
+    ctx.save();
+    if (sc !== 1) ctx.scale(sc, sc);
+    const f = customFrames[fi];
+    if (f && f.cam) {
+      const cx = S.w / 2, cy = S.h / 2;
+      ctx.translate(cx, cy);
+      ctx.scale(f.cam.zoom, f.cam.zoom);
+      ctx.rotate(f.cam.rotation * Math.PI / 180);
+      ctx.translate(-cx - f.cam.x, -cy - f.cam.y);
+    }
+    if (!f) { ctx.restore(); return; }
+    const l = customLayers.find(l => l.id === layerId);
+    if (!l || !l.vis) { ctx.restore(); return; }
     const objs = f.o[l.id] || [];
       // --- First pass: draw fills BEHIND everything ---
       for (const o of objs) {
-        if (o.angle) {
-          const c = getObjCenter(o);
+        if (o.type === 'fillPath' && o.layerId) continue;
+        if (hasTransform(o) || o.angle) {
+          const m = getObjMatrix(o);
           ctx.save();
-          ctx.translate(c.x, c.y);
-          ctx.rotate(o.angle);
-          ctx.translate(-c.x, -c.y);
+          ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
         }
-        if (o.type === 'fill') drawFill(ctx, o.fc, o.opacity * baseAlpha);
-        else if (o.type === 'group' && o.children) {
-          for (const child of o.children) {
-            if (child.type === 'fill') drawFill(ctx, child.fc, child.opacity * baseAlpha);
+
+        const isSym = o.type === 'symbol';
+        const isGrp = o.type === 'group';
+
+        // Translate symbol instances to their x,y position
+        if (isSym && (o.x || o.y)) {
+          ctx.save();
+          ctx.translate(o.x || 0, o.y || 0);
+        }
+        
+        if (o.type === 'fill') {
+          ctx.save();
+          ctx.translate(o.x || 0, o.y || 0);
+          drawFill(ctx, o.fc, o.opacity * baseAlpha);
+          ctx.restore();
+        } else if (o.type === 'fillPath') {
+          drawFillPathObj(ctx, o, baseAlpha);
+        } else if ((isGrp || isSym)) {
+          let children;
+          if (isSym) {
+            const sym = Symbols[o.symbolId];
+            if (sym.frames && sym.frames.length > 1) {
+              const symFi = fi % sym.frames.length;
+              children = sym.frames[symFi]?.children || sym.children;
+            } else {
+              children = sym.children;
+            }
+          } else {
+            children = o.children;
+          }
+          if (children) {
+            const renderGroupPass1 = (groupChildren) => {
+              for (const child of groupChildren) {
+                if (child.type === 'fill') {
+                  ctx.save();
+                  ctx.translate(child.x || 0, child.y || 0);
+                  drawFill(ctx, child.fc, child.opacity * baseAlpha);
+                  ctx.restore();
+                } else if (child.type === 'fillPath') {
+                  const hasTx = hasTransform(child) || child.angle;
+                  if (hasTx) {
+                    const m = getObjMatrix(child);
+                    ctx.save();
+                    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+                  }
+                  drawFillPathObj(ctx, child, baseAlpha);
+                  if (hasTx) ctx.restore();
+                } else if (child.type === 'group') {
+                  if (child.children) renderGroupPass1(child.children);
+                } else if (child.type === 'symbol') {
+                  const hasTx = hasTransform(child) || child.angle;
+                  if (hasTx) {
+                    const m = getObjMatrix(child);
+                    ctx.save();
+                    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+                  }
+                  if (child.x || child.y) {
+                    if (!hasTx) ctx.save();
+                    ctx.translate(child.x || 0, child.y || 0);
+                  }
+                  if (Symbols[child.symbolId] && Symbols[child.symbolId].children) renderGroupPass1(Symbols[child.symbolId].children);
+                  if (hasTx || child.x || child.y) ctx.restore();
+                }
+              }
+            };
+            renderGroupPass1(children);
           }
         }
-        if (o.angle) ctx.restore();
+        if (isSym && (o.x || o.y)) ctx.restore();
+        if (hasTransform(o) || o.angle) ctx.restore();
       }
       // --- Second pass: draw strokes, shapes, text ON TOP ---
       for (const o of objs) {
         ctx.save();
         // Motion guide: temporarily translate object to follow guide path
-        if (o.guideId && o.type !== 'guide' && o.type !== 'fill') {
+        if (o.guideId && o.type !== 'guide' && o.type !== 'fill' && o.type !== 'fillPath') {
           const guides = getAllGuides(fi);
           const guide = guides.find(g => g._guideId === o.guideId);
-          if (guide) {
-            const t = Math.max(0, Math.min(1, o.guidePos || 0));
-            const pt = getGuidePoint(guide, t);
-            if (pt) {
-              const b = getObjBounds(o);
-              ctx.translate(pt.x - (b.x + b.w / 2), pt.y - (b.y + b.h / 2));
-            }
+          if (guide && guide.pts && guide.pts.length > 1) {
+            const p1 = guide.pts[0], p2 = guide.pts[guide.pts.length - 1];
+            const t = S.frames[fi]._tweenPct !== undefined ? S.frames[fi]._tweenPct : 0;
+            const pt = getPointOnPath(guide.pts, t);
+            const cx = (p1.x + p2.x) / 2;
+            const cy = (p1.y + p2.y) / 2;
+            ctx.translate(pt.x - cx, pt.y - cy);
           }
         }
-        if (hasTransform(o)) {
+        if (hasTransform(o) || o.angle) {
           const m = getObjMatrix(o);
-          ctx.save();
           ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
-        } else if (o.angle) {
-          const c = getObjCenter(o);
-          ctx.save();
-          ctx.translate(c.x, c.y);
-          ctx.rotate(o.angle);
-          ctx.translate(-c.x, -c.y);
         }
+
+        const isSym = o.type === 'symbol';
+        const isGrp = o.type === 'group';
+
+        // Translate symbol instances to their x,y position
+        if (isSym && (o.x || o.y)) {
+          ctx.translate(o.x || 0, o.y || 0);
+        }
+
         if (o.type === 'stroke') {
           const subs = o.subs && o.subs.length ? o.subs : (o.pts ? [{ pts: o.pts, size: o.size, color: o.color, opacity: o.opacity }] : []);
-          const composite = o.composite || 'source-over';
           for (const sub of subs) {
             const color = sub.color || o.color;
             const size = sub.size !== undefined ? sub.size : o.size;
             const opacity = (sub.opacity !== undefined ? sub.opacity : o.opacity) * baseAlpha;
-            drawStroke(ctx, sub.pts, color, size, opacity, composite);
+            drawStroke(ctx, sub.pts, color, size, opacity, o.composite || 'source-over');
           }
-        } else if (o.type === 'guide') {
-          ctx.save();
-          ctx.setLineDash([4, 4]);
-          ctx.lineDashOffset = 0;
-          drawStroke(ctx, o.pts, o.color, o.size, o.opacity * baseAlpha, 'source-over');
-          ctx.restore();
         } else if (o.type === 'text') {
           ctx.save();
-          ctx.globalAlpha = o.opacity * baseAlpha;
+          ctx.font = `${o.bold ? 'bold ' : ''}${o.italic ? 'italic ' : ''}${o.size}px "${o.font}"`;
           ctx.fillStyle = o.color;
-          ctx.font = `bold ${o.size}px sans-serif`;
+          ctx.globalAlpha = o.opacity * baseAlpha;
+          ctx.textAlign = 'left';
           ctx.textBaseline = 'top';
-          const lines = (o.text || '').split('\n');
-          for (let i = 0; i < lines.length; i++) {
-            ctx.fillText(lines[i], o.x, o.y + i * o.size * 1.3);
-          }
+          const lines = o.text.split('\n');
+          for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], o.x, o.y + i * (o.size * 1.2));
           ctx.restore();
-        }
-        else if (o.type === 'group' && o.children) {
-          for (const child of o.children) {
-            if (child.type === 'stroke') {
-              const subs = child.subs && child.subs.length ? child.subs : (child.pts ? [{ pts: child.pts, size: child.size, color: child.color, opacity: child.opacity }] : []);
-              for (const sub of subs) {
-                drawStroke(ctx, sub.pts, sub.color || child.color, sub.size !== undefined ? sub.size : child.size, (sub.opacity !== undefined ? sub.opacity : child.opacity) * baseAlpha, child.composite || 'source-over');
-              }
-            } else if (child.type === 'text') {
-              ctx.save();
-              ctx.globalAlpha = child.opacity * baseAlpha;
-              ctx.fillStyle = child.color;
-              ctx.font = `bold ${child.size}px sans-serif`;
-              ctx.textBaseline = 'top';
-              const lines = (child.text || '').split('\n');
-              for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], child.x, child.y + i * child.size * 1.3);
-              ctx.restore();
+        } else if ((isGrp || isSym)) {
+          let children;
+          if (isSym) {
+            const sym = Symbols[o.symbolId];
+            if (sym.frames && sym.frames.length > 1) {
+              const symFi = fi % sym.frames.length;
+              children = sym.frames[symFi]?.children || sym.children;
+            } else {
+              children = sym.children;
             }
-            else if (child.type !== 'fill') drawShape(ctx, child.type, child.x1, child.y1, child.x2, child.y2, child.color, child.fillColor, child.size, child.opacity * baseAlpha);
+          } else {
+            children = o.children;
+          }
+          if (children) {
+            const renderGroupPass2 = (groupChildren) => {
+              for (const child of groupChildren) {
+                if (child.type === 'stroke') {
+                  const subs = child.subs && child.subs.length ? child.subs : (child.pts ? [{ pts: child.pts, size: child.size, color: child.color, opacity: child.opacity }] : []);
+                  for (const sub of subs) {
+                    const color = sub.color || child.color;
+                    const size = sub.size !== undefined ? sub.size : child.size;
+                    const opacity = (sub.opacity !== undefined ? sub.opacity : child.opacity) * baseAlpha;
+                    drawStroke(ctx, sub.pts, color, size, opacity, child.composite || 'source-over');
+                  }
+                } else if (child.type === 'text') {
+                  ctx.save();
+                  ctx.font = `${child.bold ? 'bold ' : ''}${child.italic ? 'italic ' : ''}${child.size}px "${child.font}"`;
+                  ctx.fillStyle = child.color;
+                  ctx.globalAlpha = child.opacity * baseAlpha;
+                  ctx.textAlign = 'left';
+                  ctx.textBaseline = 'top';
+                  const lines = child.text.split('\n');
+                  for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], child.x, child.y + i * (child.size * 1.2));
+                  ctx.restore();
+                } else if (child.type === 'group') {
+                  if (child.children) renderGroupPass2(child.children);
+                } else if (child.type === 'symbol') {
+                  const hasTx = hasTransform(child) || child.angle;
+                  if (hasTx) {
+                    const m = getObjMatrix(child);
+                    ctx.save();
+                    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+                  }
+                  if (child.x || child.y) {
+                    if (!hasTx) ctx.save();
+                    ctx.translate(child.x || 0, child.y || 0);
+                  }
+                  if (Symbols[child.symbolId] && Symbols[child.symbolId].children) renderGroupPass2(Symbols[child.symbolId].children);
+                  if (hasTx || child.x || child.y) ctx.restore();
+                } else if (child.type !== 'fill' && child.type !== 'fillPath') {
+                  drawShape(ctx, child.type, child.x1, child.y1, child.x2, child.y2, child.color, child.fillColor, child.size, child.opacity * baseAlpha);
+                }
+              }
+            };
+            renderGroupPass2(children);
           }
         }
-        else if (o.type !== 'fill') drawShape(ctx, o.type, o.x1, o.y1, o.x2, o.y2, o.color, o.fillColor, o.size, o.opacity * baseAlpha);
-        if (hasTransform(o) || o.angle) ctx.restore();
+        else if (o.type !== 'fill' && o.type !== 'fillPath') drawShape(ctx, o.type, o.x1, o.y1, o.x2, o.y2, o.color, o.fillColor, o.size, o.opacity * baseAlpha);
         ctx.restore();
     }
-    if (sc !== 1) ctx.restore();
+    ctx.restore();
   };
   // 1) Draw background
   c.save();
@@ -371,8 +586,19 @@ function renderFrame(c, fi, sc, noOnion) {
     c.fillRect(0, 0, S.w, S.h);
   }
   c.restore();
+
+  if (IsolationMode && savedState) {
+    c.save();
+    c.globalAlpha = 0.3; // Dim the main scene
+    for (const l of savedState.layers) {
+      if (!l.vis) continue;
+      drawLayer(c, savedState.frameIdx, sc, l.id, 0.3, savedState.frames, savedState.layers);
+    }
+    c.restore();
+  }
+
   // 2) Onion skin ghosts
-  if (!noOnion && S.onion) {
+  if (!noOnion && S.onion && !IsolationMode) {
     for (let i = 1; i <= S.onionFrames; i++) {
       if (fi - i < 0) break;
       const alpha = S.onionOpacity * (1 - (i - 1) / S.onionFrames);
@@ -414,28 +640,36 @@ let _cache = null, _cacheZoom = 0, _cacheFrame = -1, _cacheBs = 0;
 
 // Reusable canvases for layer compositing (avoids createElement per layer per frame)
 let _rlc = null, _rlcCtx = null;  // layer canvas (reused across all layers + onion)
+let _eraserCanvas = null, _eraserCtx = null; // temp canvas for per-stroke eraser rendering
 let _roc = null, _rocCtx = null;  // onion composite canvas (reused across onion frames)
 
+
+
 function ensureSize(cv, w, h) {
-  if (!cv) { cv = document.createElement('canvas'); cv.width = w; cv.height = h; return cv; }
+  if (!cv) {
+    if (typeof OffscreenCanvas !== 'undefined') cv = new OffscreenCanvas(w, h);
+    else { cv = document.createElement('canvas'); cv.width = w; cv.height = h; }
+    return cv;
+  }
   if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
   return cv;
 }
 let _thumbCache = {}, _thumbsDirty = true;
 
+let _cacheCanvas = null;
 function buildCache(bs) {
   const pw = Math.round(S.w * bs), ph = Math.round(S.h * bs);
-  const c = document.createElement('canvas');
-  c.width = pw; c.height = ph;
-  const cx = c.getContext('2d');
+  if (!_cacheCanvas) _cacheCanvas = document.createElement('canvas');
+  _cacheCanvas.width = pw; _cacheCanvas.height = ph;
+  const cx = _cacheCanvas.getContext('2d');
   cx.imageSmoothingEnabled = true;
   cx.imageSmoothingQuality = 'high';
   renderFrame(cx, S.frameIdx, bs);
-  _cache = c;
+  _cache = _cacheCanvas;
   _cacheZoom = S.zoom;
   _cacheFrame = S.frameIdx;
   _cacheBs = bs;
-  return c;
+  return _cacheCanvas;
 }
 
 function render() {
@@ -454,10 +688,44 @@ function render() {
   renderOverlay();
 }
 
+let _renderPending = false;
+function renderThrottled() {
+  if (_renderPending) return;
+  _renderPending = true;
+  requestAnimationFrame(() => { _renderPending = false; render(); drawSelection(); });
+}
+
 // Draw current stroke on overlay (lightweight, called on every mousemove)
 function renderOverlay() {
   const pw = overlay.width, ph = overlay.height;
   octx.clearRect(0, 0, pw, ph);
+
+  if (S.tool === 'camera') {
+    const f = S.frames[S.frameIdx];
+    if (f && f.cam) {
+      octx.save();
+      const bs = bufScale();
+      if (bs !== 1) octx.scale(bs, bs);
+      const cx = S.w / 2, cy = S.h / 2;
+      
+      octx.fillStyle = 'rgba(0,0,0,0.6)';
+      octx.fillRect(-S.w * 2, -S.h * 2, S.w * 5, S.h * 5); 
+
+      octx.globalCompositeOperation = 'destination-out';
+      octx.translate(cx, cy);
+      octx.scale(f.cam.zoom, f.cam.zoom);
+      octx.rotate(f.cam.rotation * Math.PI / 180);
+      octx.translate(-cx - f.cam.x, -cy - f.cam.y);
+      octx.fillRect(0, 0, S.w, S.h); 
+
+      octx.globalCompositeOperation = 'source-over';
+      octx.strokeStyle = '#a134eb'; 
+      octx.lineWidth = 2 / f.cam.zoom;
+      octx.strokeRect(0, 0, S.w, S.h);
+      octx.restore();
+    }
+  }
+
   if (!S.curStroke) return;
   const bs = bufScale();
   octx.save();
@@ -506,6 +774,28 @@ function simplify(pts) {
   const r = [pts[0]];
   rdp(0, pts.length - 1, r);
   r.push(pts[pts.length - 1]);
+  return r;
+}
+
+// Densify path so no segment exceeds maxLen (prevents long line segments from causing wide erasure)
+function densifyPath(pts, maxLen) {
+  if (!pts || pts.length < 2) return pts || [];
+  const r = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const a = r[r.length - 1], b = pts[i];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > maxLen && dist > 0) {
+      const steps = Math.ceil(dist / maxLen);
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps;
+        const np = { x: a.x + dx * t, y: a.y + dy * t };
+        if (a.p !== undefined && b.p !== undefined) np.p = a.p + (b.p - a.p) * t;
+        r.push(np);
+      }
+    }
+    r.push(b);
+  }
   return r;
 }
 
@@ -645,6 +935,12 @@ function restoreSnapshot(fi) {
       const r = { ...o };
       if (r.pts) r.pts = r.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) }));
       if (r.subs) r.subs = r.subs.map(sub => ({ ...sub, pts: sub.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) })) }));
+      if (r.eraserFc) {
+        const ec = document.createElement('canvas');
+        ec.width = r.eraserFc.width; ec.height = r.eraserFc.height;
+        ec.getContext('2d').drawImage(r.eraserFc, 0, 0);
+        r.eraserFc = ec;
+      }
       if (r.children) r.children = r.children.map(child => {
         if (child.fc) {
           const cc = document.createElement('canvas');
@@ -652,7 +948,14 @@ function restoreSnapshot(fi) {
           cc.getContext('2d').drawImage(child.fc, 0, 0);
           return { ...child, fc: cc };
         }
-        return { ...child, pts: child.pts ? child.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) })) : undefined };
+        const rc = { ...child, pts: child.pts ? child.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) })) : undefined };
+        if (child.eraserFc) {
+          const ec = document.createElement('canvas');
+          ec.width = child.eraserFc.width; ec.height = child.eraserFc.height;
+          ec.getContext('2d').drawImage(child.eraserFc, 0, 0);
+          rc.eraserFc = ec;
+        }
+        return rc;
       });
       return r;
     });
@@ -706,6 +1009,17 @@ function redo() {
 
 // ==================== DRAWING ====================
 function startDraw(e) {
+  if (S.tool === 'camera') {
+    if (e.button !== 0) return;
+    const f = S.frames[S.frameIdx];
+    if (f && !f.cam) f.cam = { x: 0, y: 0, zoom: 1, rotation: 0 };
+    S.drawing = true;
+    S._camStartX = f.cam.x;
+    S._camStartY = f.cam.y;
+    S.lx = e.clientX;
+    S.ly = e.clientY;
+    return;
+  }
   if (e.button !== 0) return;
   const l = L();
   if (!l || l.lock) return;
@@ -738,6 +1052,17 @@ function startDraw(e) {
 
 function draw(e) {
   if (!S.drawing) return;
+  if (S.tool === 'camera') {
+    const f = S.frames[S.frameIdx];
+    const dx = (S.lx - e.clientX) / S.zoom / f.cam.zoom;
+    const dy = (S.ly - e.clientY) / S.zoom / f.cam.zoom;
+    const rad = -f.cam.rotation * Math.PI / 180;
+    f.cam.x = S._camStartX + (dx * Math.cos(rad) - dy * Math.sin(rad));
+    f.cam.y = S._camStartY + (dx * Math.sin(rad) + dy * Math.cos(rad));
+    S.tlDirty = true;
+    renderThrottled();
+    return;
+  }
   const p = m2b(e);
   if (S.tool === 'select') { selMove(p, e); return; }
   if (S.tool === 'pen') { drawPen(p); return; }
@@ -767,6 +1092,11 @@ function draw(e) {
 
 function endDraw(e) {
   if (!S.drawing) return;
+  if (S.tool === 'camera') {
+    S.drawing = false;
+    saveSnapshot();
+    return;
+  }
   if (e && e.button !== 0) return;
   // Release pointer capture
   try { if (e && e.pointerId) canvas.releasePointerCapture(e.pointerId); } catch(_) {}
@@ -776,7 +1106,7 @@ function endDraw(e) {
 
   if (['brush', 'pencil', 'eraser', 'guide'].includes(S.tool) && S.curStroke) {
     // Only simplify when smoothness > 0 (0 = keep all points = preview matches final)
-    if (S.smoothness > 0 && S.curStroke.pts.length > 3 && S.tool !== 'guide') {
+    if (S.smoothness > 0 && S.curStroke.pts.length > 3 && S.tool !== 'guide' && S.tool !== 'eraser') {
       S.curStroke.pts = simplify(S.curStroke.pts);
     }
     // Auto-smooth: convert rough freehand to clean bezier curves
@@ -788,92 +1118,181 @@ function endDraw(e) {
       const isEraser = S.curStroke.composite === 'destination-out';
       const isGuide = S.curStroke.isGuide;
       if (isEraser) {
-        // Eraser: remove overlapping points from existing strokes on this layer
-        const eraserPts = S.curStroke.pts;
-        const eraserSize = S.curStroke.size;
-        if (!eraserPts || eraserPts.length < 2) { S.curStroke = null; render(); return; }
+        const eraserPtsWorld = densifyPath(S.curStroke.pts, 1);
+        const eraserSizeWorld = S.curStroke.size;
+        if (!eraserPtsWorld || eraserPtsWorld.length < 2) { S.curStroke = null; render(); return; }
         const objs = obs(S.frameIdx, l.id);
-        // Helper: check if point (x,y) is near eraser path
-        const isNearEraser = (x, y, threshold) => {
-          const th2 = threshold * threshold;
-          for (const ep of eraserPts) {
-            const dx = x - ep.x, dy = y - ep.y;
-            if (dx*dx + dy*dy < th2) return true;
-          }
-          for (let si = 0; si < eraserPts.length - 1; si++) {
-            const ax = eraserPts[si].x, ay = eraserPts[si].y;
-            const bx = eraserPts[si+1].x, by = eraserPts[si+1].y;
-            const dx = bx - ax, dy = by - ay;
-            const len2 = dx*dx + dy*dy;
-            if (len2 < 1) continue;
-            let t = ((x - ax)*dx + (y - ay)*dy) / len2;
-            t = Math.max(0, Math.min(1, t));
-            const cx = ax + t*dx, cy = ay + t*dy;
-            const d2 = (x-cx)*(x-cx) + (y-cy)*(y-cy);
-            if (d2 < th2) return true;
+        let erasedAny = false;
+
+        function distSq(ax, ay, bx, by) { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; }
+        function distToSegment(px, py, ax, ay, bx, by) {
+          const dx = bx - ax, dy = by - ay;
+          const lenSq = dx * dx + dy * dy;
+          if (lenSq === 0) return distSq(px, py, ax, ay);
+          let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+          t = Math.max(0, Math.min(1, t));
+          return distSq(px, py, ax + t * dx, ay + t * dy);
+        }
+        function closestPtOnSeg(px, py, ax, ay, bx, by) {
+          const dx = bx - ax, dy = by - ay;
+          const lenSq = dx * dx + dy * dy;
+          if (lenSq === 0) return { x: ax, y: ay };
+          let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+          t = Math.max(0, Math.min(1, t));
+          return { x: ax + t * dx, y: ay + t * dy };
+        }
+        function segToSegDist(ax, ay, bx, by, cx, cy, dx, dy) {
+          const p = closestPtOnSeg(ax, ay, cx, cy, dx, dy);
+          const q = closestPtOnSeg(bx, by, cx, cy, dx, dy);
+          const p2 = closestPtOnSeg(cx, cy, ax, ay, bx, by);
+          const q2 = closestPtOnSeg(dx, dy, ax, ay, bx, by);
+          let best = distSq(p.x, p.y, ax, ay);
+          best = Math.min(best, distSq(q.x, q.y, bx, by));
+          best = Math.min(best, distSq(p2.x, p2.y, cx, cy));
+          best = Math.min(best, distSq(q2.x, q2.y, dx, dy));
+          return best;
+        }
+        function isErased(px, py) {
+          const r2 = (eraserSizeWorld / 2) * (eraserSizeWorld / 2);
+          for (let j = 0; j < eraserPtsWorld.length - 1; j++) {
+            if (distToSegment(px, py, eraserPtsWorld[j].x, eraserPtsWorld[j].y, eraserPtsWorld[j+1].x, eraserPtsWorld[j+1].y) <= r2) return true;
           }
           return false;
-        };
-        // Remove points from a pts array where they overlap the eraser, split at gaps
-        const removeErased = (pts, size) => {
-          if (!pts || pts.length < 2) return { result: null, erased: false };
-          const threshold = eraserSize / 2;
-          const remaining = [];
-          let erased = false;
-          for (const pt of pts) {
-            if (isNearEraser(pt.x, pt.y, threshold)) { erased = true; continue; }
-            remaining.push(pt);
-          }
-          if (!erased) return { result: null, erased: false };
-          if (remaining.length < 2) return { result: [], erased: true };
-          // Split at gaps wider than threshold*2
-          const gapTh2 = threshold * threshold * 4;
-          const segments = [];
-          let cur = [remaining[0]];
-          for (let pi = 1; pi < remaining.length; pi++) {
-            const dx = remaining[pi].x - remaining[pi-1].x;
-            const dy = remaining[pi].y - remaining[pi-1].y;
-            if (dx*dx + dy*dy > gapTh2) {
-              if (cur.length >= 2) segments.push(cur);
-              cur = [remaining[pi]];
-            } else {
-              cur.push(remaining[pi]);
-            }
-          }
-          if (cur.length >= 2) segments.push(cur);
-          return { result: segments.length > 0 ? segments : [], erased: true };
-        };
+        }
+
         for (let i = objs.length - 1; i >= 0; i--) {
           const o = objs[i];
-          if (o.type !== 'stroke' || o.composite === 'destination-out') continue;
-          // Handle subs (merged strokes)
-          if (o.subs && o.subs.length > 0) {
-            const newSubs = [];
-            for (const sub of o.subs) {
-              const subSize = sub.size !== undefined ? sub.size : (o.size || 10);
-              const { result, erased: subErased } = removeErased(sub.pts, subSize);
-              if (!subErased) { newSubs.push(sub); continue; }
-              if (result && result.length > 0) {
-                for (const seg of result) newSubs.push({ ...sub, pts: seg });
-              }
-              // if result is [] or null, sub fully erased → skip it
+
+          if (o.type === 'fill') {
+            if (!o.fc) continue;
+            const fx = o.x || 0, fy = o.y || 0;
+            const fctx = o.fc.getContext('2d');
+            fctx.save();
+            fctx.globalCompositeOperation = 'destination-out';
+            fctx.lineCap = 'round';
+            fctx.lineJoin = 'round';
+            fctx.lineWidth = eraserSizeWorld;
+            fctx.beginPath();
+            let hasValid = false;
+            for (const ep of eraserPtsWorld) {
+              const lx = ep.x - fx, ly = ep.y - fy;
+              if (!hasValid) { fctx.moveTo(lx, ly); hasValid = true; }
+              else { fctx.lineTo(lx, ly); }
             }
-            if (newSubs.length === 0) { objs.splice(i, 1); }
-            else { o.subs = newSubs; }
-          } else {
-            // Simple stroke with pts
-            const { result, erased: strokeErased } = removeErased(o.pts, o.size);
-            if (!strokeErased) continue;
-            if (result && result.length > 0) {
-              o.pts = result[0];
-              for (let ri = 1; ri < result.length; ri++) {
-                objs.splice(i + ri, 0, { ...o, pts: result[ri] });
-              }
-            } else {
-              objs.splice(i, 1);
+            if (hasValid) fctx.stroke();
+            fctx.restore();
+            const idata = fctx.getImageData(0, 0, o.fc.width, o.fc.height).data;
+            let hasVisible = false;
+            for (let pi = 3; pi < idata.length; pi += 4) { if (idata[pi] > 0) { hasVisible = true; break; } }
+            if (!hasVisible) { objs.splice(i, 1); erasedAny = true; }
+            continue;
+          }
+
+          if (o.type === 'fillPath') {
+            let localEraserPts = eraserPtsWorld;
+            if (hasTransform(o)) {
+              const m = getObjMatrix(o);
+              const inv = invertMatrix(m);
+              if (inv) localEraserPts = eraserPtsWorld.map(ep => ({ x: inv.a * ep.x + inv.c * ep.y + inv.e, y: inv.b * ep.x + inv.d * ep.y + inv.f }));
+            }
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const p of o.pts) { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; }
+            const pad = eraserSizeWorld + 5;
+            const fx = minX - pad, fy = minY - pad;
+            const fw = Math.ceil(maxX - minX + pad * 2), fh = Math.ceil(maxY - minY + pad * 2);
+            if (fw < 1 || fh < 1) continue;
+            const fc = document.createElement('canvas');
+            fc.width = fw; fc.height = fh;
+            const fctx = fc.getContext('2d');
+            if (o.eraserFc) fctx.drawImage(o.eraserFc, o.eraserX - fx, o.eraserY - fy);
+            fctx.save();
+            fctx.globalCompositeOperation = 'destination-out';
+            fctx.lineCap = 'round'; fctx.lineJoin = 'round';
+            fctx.lineWidth = eraserSizeWorld;
+            fctx.beginPath();
+            let hasValid = false;
+            for (const ep of localEraserPts) {
+              const lx = ep.x - fx, ly = ep.y - fy;
+              if (lx < -eraserSizeWorld || lx > fw + eraserSizeWorld || ly < -eraserSizeWorld || ly > fh + eraserSizeWorld) continue;
+              if (!hasValid) { fctx.moveTo(lx, ly); hasValid = true; } else { fctx.lineTo(lx, ly); }
+            }
+            if (hasValid) fctx.stroke();
+            fctx.restore();
+            const idata = fctx.getImageData(pad, pad, fw - pad * 2, fh - pad * 2).data;
+            let hasVisible = false;
+            for (let pi = 3; pi < idata.length; pi += 4) { if (idata[pi] > 0) { hasVisible = true; break; } }
+            if (!hasVisible) { objs.splice(i, 1); erasedAny = true; continue; }
+            o.eraserFc = fc; o.eraserX = fx; o.eraserY = fy;
+            erasedAny = true;
+            continue;
+          }
+
+          if (o.type !== 'stroke' || o.composite === 'destination-out') continue;
+
+          const allPts = o.subs && o.subs.length ? o.subs.flatMap(s => s.pts) : (o.pts || []);
+          let localEraserPts = eraserPtsWorld;
+          let localEraserSize = eraserSizeWorld;
+          if (hasTransform(o)) {
+            const m = getObjMatrix(o);
+            const inv = invertMatrix(m);
+            if (inv) {
+              localEraserPts = eraserPtsWorld.map(ep => ({ x: inv.a * ep.x + inv.c * ep.y + inv.e, y: inv.b * ep.x + inv.d * ep.y + inv.f }));
+              const scaleX = Math.sqrt(m.a * m.a + m.b * m.b);
+              const scaleY = Math.sqrt(m.c * m.c + m.d * m.d);
+              localEraserSize = eraserSizeWorld / Math.max(scaleX, scaleY, 0.001);
             }
           }
+
+          const origPts = (o.subs && o.subs.length) ? o.subs.flatMap(s => s.pts) : (o.pts || []);
+          const marked = new Uint8Array(origPts.length);
+          const eR2 = (localEraserSize / 2) * (localEraserSize / 2);
+          for (let pi = 0; pi < origPts.length; pi++) {
+            const pt = origPts[pi];
+            for (let ej = 0; ej < localEraserPts.length - 1; ej++) {
+              if (distToSegment(pt.x, pt.y, localEraserPts[ej].x, localEraserPts[ej].y, localEraserPts[ej+1].x, localEraserPts[ej+1].y) <= eR2) {
+                marked[pi] = 1; break;
+              }
+            }
+          }
+
+          for (let pi = 0; pi < origPts.length - 1; pi++) {
+            if (marked[pi] && marked[pi + 1]) continue;
+            const ax = origPts[pi].x, ay = origPts[pi].y;
+            const bx = origPts[pi+1].x, by = origPts[pi+1].y;
+            for (let ej = 0; ej < localEraserPts.length - 1; ej++) {
+              const d2 = segToSegDist(ax, ay, bx, by, localEraserPts[ej].x, localEraserPts[ej].y, localEraserPts[ej+1].x, localEraserPts[ej+1].y);
+              if (d2 <= eR2) { marked[pi] = 1; marked[pi + 1] = 1; break; }
+            }
+          }
+
+          const segments = [];
+          let seg = [];
+          for (let pi = 0; pi < origPts.length; pi++) {
+            if (marked[pi]) {
+              if (seg.length >= 2) segments.push(seg);
+              seg = [];
+            } else {
+              seg.push({ ...origPts[pi] });
+            }
+          }
+          if (seg.length >= 2) segments.push(seg);
+
+          const idx = objs.indexOf(o);
+          if (idx < 0) continue;
+          objs.splice(idx, 1);
+          erasedAny = true;
+          for (const segPts of segments) {
+            objs.splice(idx, 0, {
+              type: 'stroke',
+              pts: segPts,
+              color: o.color,
+              size: o.size,
+              opacity: o.opacity,
+              composite: o.composite || 'source-over',
+            });
+          }
         }
+        if (erasedAny && S.selObjs.length) clearSel();
       } else {
         const isGuide = S.curStroke.isGuide;
         const newObj = {
@@ -901,7 +1320,7 @@ function endDraw(e) {
     const p = m2b(e);
     const l = L();
     if (l) {
-      obs(S.frameIdx, l.id).push({
+      obs(S.frameIdx, l.id).push({ uid: Math.random().toString(36).substr(2, 9),
         type: S.tool, x1: S.sx, y1: S.sy, x2: p.x, y2: p.y,
         color: S.stroke, fillColor: S.fill, size: S.size, opacity: S.opacity,
       });
@@ -966,7 +1385,6 @@ function renderPenOverlay(mouseP) {
   octx.fillStyle = '#0af';
   octx.lineWidth = 1;
 
-  // Draw anchors
   for (const a of _penPath.anchors) {
     octx.fillRect(a.x - 3, a.y - 3, 6, 6);
     if (a.cpX !== undefined) {
@@ -978,7 +1396,6 @@ function renderPenOverlay(mouseP) {
     }
   }
 
-  // Draw path segments
   octx.strokeStyle = '#0af';
   octx.beginPath();
   octx.moveTo(_penPath.anchors[0].x, _penPath.anchors[0].y);
@@ -994,7 +1411,6 @@ function renderPenOverlay(mouseP) {
   }
   octx.stroke();
 
-  // Draw preview from last anchor to mouse
   if (mouseP && _penPath.anchors.length > 0) {
     const last = _penPath.anchors[_penPath.anchors.length - 1];
     let previewCp;
@@ -1058,7 +1474,7 @@ function finishPenPath() {
   if (pts.length > 1) {
     const l = L();
     if (l) {
-      obs(S.frameIdx, l.id).push({
+      obs(S.frameIdx, l.id).push({ uid: Math.random().toString(36).substr(2, 9),
         type: 'stroke',
         pts,
         color: S.stroke,
@@ -1087,15 +1503,11 @@ function autoMerge(lid, newObj) {
   }
   if (prevIdx < 0) { objs.push(newObj); return; }
   const prev = objs[prevIdx];
-  // Never merge guides, erasers, or different types
   if (prev.type !== newObj.type) { objs.push(newObj); return; }
   if (prev.type === 'guide' || newObj.type === 'guide') { objs.push(newObj); return; }
-  // Never merge with eraser objects or into eraser strokes
   const isEraser = (o) => o.composite === 'destination-out';
   if (isEraser(prev) || isEraser(newObj)) { objs.push(newObj); return; }
-  // Don't merge if composites differ (color and size can differ per sub-stroke)
   if (prev.composite !== newObj.composite) { objs.push(newObj); return; }
-  // Check point-to-point proximity
   const prevPts = prev.subs ? prev.subs.flatMap(s => s.pts) : (prev.pts || []);
   const maxSize = Math.max(prev.size, newObj.size);
   const thresholdSq = (maxSize + 15) ** 2;
@@ -1108,7 +1520,6 @@ function autoMerge(lid, newObj) {
     if (close) break;
   }
   if (!close) { objs.push(newObj); return; }
-  // Merge: each sub-stroke keeps its own size/color/opacity
   const prevSubs = prev.subs && prev.subs.length
     ? prev.subs
     : [{ pts: prev.pts, size: prev.size, color: prev.color, opacity: prev.opacity }];
@@ -1123,92 +1534,251 @@ function autoMerge(lid, newObj) {
   objs.splice(prevIdx, 1, merged);
 }
 
-// ---- Flood fill with tolerance: fills closed shapes properly ----
+// ---- RDP path simplification ----
+function smoothPath(pts, iterations = 1) {
+  if (pts.length <= 2) return pts;
+  let result = pts;
+  for (let iter = 0; iter < iterations; iter++) {
+    const smoothed = [];
+    const len = result.length;
+    for (let i = 0; i < len; i++) {
+      const p0 = result[(i - 1 + len) % len];
+      const p1 = result[i];
+      const p2 = result[(i + 1) % len];
+      smoothed.push({
+        x: p1.x * 0.5 + p0.x * 0.25 + p2.x * 0.25,
+        y: p1.y * 0.5 + p0.y * 0.25 + p2.y * 0.25
+      });
+    }
+    result = smoothed;
+  }
+  return result;
+}
+
+function simplifyPath(pts, eps) {
+  if (pts.length <= 2) return pts;
+  let maxDist = 0, maxIdx = 0;
+  const first = pts[0], last = pts[pts.length - 1];
+  const dx = last.x - first.x, dy = last.y - first.y;
+  const lenSq = dx * dx + dy * dy;
+  for (let i = 1; i < pts.length - 1; i++) {
+    let d;
+    if (lenSq === 0) {
+      const ex = pts[i].x - first.x, ey = pts[i].y - first.y;
+      d = Math.sqrt(ex * ex + ey * ey);
+    } else {
+      const t = Math.max(0, Math.min(1, ((pts[i].x - first.x) * dx + (pts[i].y - first.y) * dy) / lenSq));
+      const px = first.x + t * dx, py = first.y + t * dy;
+      const ex = pts[i].x - px, ey = pts[i].y - py;
+      d = Math.sqrt(ex * ex + ey * ey);
+    }
+    if (d > maxDist) { maxDist = d; maxIdx = i; }
+  }
+  if (maxDist > eps) {
+    const left = simplifyPath(pts.slice(0, maxIdx + 1), eps);
+    const right = simplifyPath(pts.slice(maxIdx), eps);
+    return left.slice(0, -1).concat(right);
+  }
+  return [first, last];
+}
+
+// ---- Build vector polygon from filled binary mask ----
+function buildFillPath(filled, w, h) {
+  const leftEdge = [], rightEdge = [];
+  for (let y = 0; y < h; y++) {
+    let lx = -1, rx = -1;
+    for (let x = 0; x < w; x++) {
+      if (filled[y * w + x]) {
+        if (lx < 0) lx = x;
+        rx = x;
+      }
+    }
+    if (lx >= 0) {
+      leftEdge.push({ x: lx, y });
+      rightEdge.push({ x: rx, y });
+    }
+  }
+  if (leftEdge.length < 2) return [];
+  const path = leftEdge.concat(rightEdge.reverse());
+  return path;
+}
+
+// ---- Marching squares contour extraction (sub-pixel precision) ----
+function marchingSquares(filled, w, h) {
+  const contours = [];
+  const visited = new Uint8Array(w * h);
+
+  for (let y = 0; y < h - 1; y++) {
+    for (let x = 0; x < w - 1; x++) {
+      const tl = filled[y * w + x] ? 1 : 0;
+      const tr = filled[y * w + x + 1] ? 1 : 0;
+      const bl = filled[(y + 1) * w + x] ? 1 : 0;
+      const br = filled[(y + 1) * w + x + 1] ? 1 : 0;
+      const idx = tl * 8 + tr * 4 + br * 2 + bl;
+      if (idx === 0 || idx === 15) continue;
+
+      const top = { x: x + 0.5, y };
+      const right = { x: x + 1, y: y + 0.5 };
+      const bottom = { x: x + 0.5, y: y + 1 };
+      const left = { x, y: y + 0.5 };
+
+      let segments;
+      switch (idx) {
+        case 1: case 14: segments = [[left, bottom]]; break;
+        case 2: case 13: segments = [[bottom, right]]; break;
+        case 3: case 12: segments = [[left, right]]; break;
+        case 4: case 11: segments = [[top, right]]; break;
+        case 5: segments = [[left, top], [bottom, right]]; break;
+        case 6: case 9: segments = [[top, bottom]]; break;
+        case 7: case 8: segments = [[left, top]]; break;
+        case 10: segments = [[top, right], [left, bottom]]; break;
+        default: continue;
+      }
+      for (const seg of segments) contours.push(seg);
+    }
+  }
+
+  if (contours.length === 0) return [];
+
+  const connected = [];
+  const used = new Uint8Array(contours.length);
+  let current = contours[0];
+  connected.push(current[0], current[1]);
+  used[0] = 1;
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const lastPt = connected[connected.length - 1];
+    for (let i = 0; i < contours.length; i++) {
+      if (used[i]) continue;
+      const seg = contours[i];
+      const d0 = Math.abs(seg[0].x - lastPt.x) + Math.abs(seg[0].y - lastPt.y);
+      const d1 = Math.abs(seg[1].x - lastPt.x) + Math.abs(seg[1].y - lastPt.y);
+      if (d0 < 0.6) {
+        connected.push(seg[1]);
+        used[i] = 1;
+        changed = true;
+        break;
+      } else if (d1 < 0.6) {
+        connected.push(seg[0]);
+        used[i] = 1;
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  return connected;
+}
+
+// ---- Fill: alpha-mask flood fill → bitmap fill ----
 function doFill(c) {
   const l = L();
   if (!l) return;
   const w = S.w, h = S.h;
 
-  // 1. Render frame (background + strokes/shapes, NO existing fills)
-  const tmp = document.createElement('canvas');
-  tmp.width = w; tmp.height = h;
-  const tc = tmp.getContext('2d');
-
-  tc.fillStyle = S.bgColor;
-  tc.fillRect(0, 0, w, h);
+  // 1. Render strokes/shapes to a transparent canvas (NO background)
+  const wall = document.createElement('canvas');
+  wall.width = w; wall.height = h;
+  const wc = wall.getContext('2d');
 
   for (const layer of S.layers) {
     if (!layer.vis) continue;
     const f = S.frames[S.frameIdx];
     if (!f) continue;
     for (const o of (f.o[layer.id] || [])) {
-        if (o.type === 'stroke') {
-          const subs = o.subs && o.subs.length ? o.subs : (o.pts ? [{ pts: o.pts, size: o.size, color: o.color, opacity: o.opacity }] : []);
-          for (const sub of subs) {
-            const sz = sub.size !== undefined ? sub.size : o.size;
-            drawStroke(tc, sub.pts, sub.color || o.color, sz, 1, 'source-over');
+      if (o.type === 'stroke') {
+        const subs = o.subs && o.subs.length ? o.subs : (o.pts ? [{ pts: o.pts, size: o.size, color: o.color, opacity: o.opacity }] : []);
+        for (const sub of subs) {
+          const sz = sub.size !== undefined ? sub.size : o.size;
+          drawStroke(wc, sub.pts, sub.color || o.color, sz, 1, 'source-over');
+        }
+      } else if (o.type === 'rect' || o.type === 'circle' || o.type === 'line') {
+        drawShape(wc, o.type, o.x1, o.y1, o.x2, o.y2, o.color, o.fillColor, o.size, 1);
+      } else if (o.type === 'fillPath' && o.pts && o.pts.length > 2) {
+        wc.save();
+        wc.fillStyle = o.color;
+        wc.globalAlpha = o.opacity;
+        wc.beginPath();
+        wc.moveTo(o.pts[0].x, o.pts[0].y);
+        for (let i = 1; i < o.pts.length; i++) wc.lineTo(o.pts[i].x, o.pts[i].y);
+        wc.closePath();
+        wc.fill();
+        wc.lineWidth = 1.5;
+        wc.strokeStyle = o.color;
+        wc.stroke();
+        wc.restore();
+      } else if (o.type === 'fill' && o.fc) {
+        wc.save();
+        wc.globalAlpha = o.opacity;
+        if (o.erasers && o.erasers.length > 0) {
+          const tmpCv = document.createElement('canvas');
+          tmpCv.width = o.fc.width; tmpCv.height = o.fc.height;
+          const tmpCtx = tmpCv.getContext('2d');
+          tmpCtx.drawImage(o.fc, 0, 0);
+          tmpCtx.globalCompositeOperation = 'destination-out';
+          tmpCtx.lineCap = 'round';
+          tmpCtx.lineJoin = 'round';
+          const fox2 = o.x || 0, foy2 = o.y || 0;
+          for (const er of o.erasers) {
+            tmpCtx.lineWidth = er.size;
+            tmpCtx.beginPath();
+            if (er.pts.length > 0) {
+              tmpCtx.moveTo(er.pts[0].x - fox2, er.pts[0].y - foy2);
+              for (let i = 1; i < er.pts.length; i++) tmpCtx.lineTo(er.pts[i].x - fox2, er.pts[i].y - foy2);
+              tmpCtx.stroke();
+            }
           }
-        } else if (o.type === 'rect' || o.type === 'circle' || o.type === 'line') {
-          drawShape(tc, o.type, o.x1, o.y1, o.x2, o.y2, o.color, o.fillColor, o.size, 1);
-        } else if (o.type === 'pen' && o.pts) {
-          drawStroke(tc, o.pts, o.color, o.size, 1, 'source-over');
+          wc.drawImage(tmpCv, o.x || 0, o.y || 0);
+        } else {
+          wc.drawImage(o.fc, o.x || 0, o.y || 0);
+        }
+        wc.restore();
+      } else if (o.type === 'pen' && o.pts) {
+        drawStroke(wc, o.pts, o.color, o.size, 1, 'source-over');
       }
     }
   }
 
-  // 2. Read pixels
-  const id = tc.getImageData(0, 0, w, h);
-  const d = id.data;
+  // 2. Extract pixel data
+  const wd = wc.getImageData(0, 0, w, h).data;
+
+  // Reduced WALL_TOL to prevent leaking through 1px anti-aliased lines
+  const WALL_TOL = typeof S.fillTolerance === 'number' ? S.fillTolerance : 80;
+
   const sx = Math.round(c.x), sy = Math.round(c.y);
-  if (sx < 0 || sx >= w || sy < 0 || sy >= h) return;
+  if (sx <= 0 || sx >= w - 1 || sy <= 0 || sy >= h - 1) return;
 
-  const baseIdx = (sy * w + sx) * 4;
-  const sr = d[baseIdx], sg = d[baseIdx + 1], sb = d[baseIdx + 2], sa = d[baseIdx + 3];
+  // If clicking on a wall pixel, bail
+  const seedIdx = (sy * w + sx) * 4;
+  if (wd[seedIdx + 3] > WALL_TOL) return;
 
-  const hex = S.stroke.replace('#', '');
-  const fr = parseInt(hex.substring(0, 2), 16);
-  const fg = parseInt(hex.substring(2, 4), 16);
-  const fb = parseInt(hex.substring(4, 6), 16);
-  const fa = Math.round(S.opacity * 255);
-
-  if (sr === fr && sg === fg && sb === fb && sa === fa) return;
-
-  const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
-  const TOL = S.fillTolerance; // tolerance: pixels within this range are "background"
-
-  // Helper: is this pixel a STROKE (not background)?
-  const isStroke = (idx) => {
-    const pi = idx * 4;
-    return Math.abs(d[pi] - sr) > TOL ||
-           Math.abs(d[pi+1] - sg) > TOL ||
-           Math.abs(d[pi+2] - sb) > TOL ||
-           Math.abs(d[pi+3] - sa) > TOL;
-  };
-
-  // 3. Flood fill (stack-based, 8-dir)
+  // 3. Flood fill using alpha mask as wall boundary
   const filled = new Uint8Array(w * h);
   const stack = [[sx, sy]];
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
 
   while (stack.length > 0) {
     const [x, y] = stack.pop();
-    if (x < 0 || x >= w || y < 0 || y >= h) continue;
+    // 1px margin prevents d3-contour from creating unclosed boundary squares
+    if (x <= 0 || y <= 0 || x >= w - 1 || y >= h - 1) continue;
     const idx = y * w + x;
     if (filled[idx]) continue;
-    if (isStroke(idx)) continue; // wall — do not cross
-
+    if (wd[idx * 4 + 3] > WALL_TOL) continue;
     filled[idx] = 1;
     for (const [dx, dy] of dirs) stack.push([x + dx, y + dy]);
   }
 
-  // 4. Dilate fill 8 times to reach anti-aliased stroke edges
-  // Stroke pixels are NEVER crossed
-  for (let iter = 0; iter < 8; iter++) {
+  // 4. Dilate to cover anti-aliased edge pixels (more passes = less gaps)
+  const DILATE_TOL = Math.min(250, WALL_TOL + 50);
+  for (let iter = 0; iter < 4; iter++) {
     const tmpF = new Uint8Array(filled);
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
         const idx = y * w + x;
         if (tmpF[idx]) continue;
-        if (isStroke(idx)) continue; // never dilate through stroke
+        if (wd[idx * 4 + 3] > DILATE_TOL) continue;
         for (const [dx, dy] of dirs) {
           if (tmpF[(y + dy) * w + (x + dx)]) { filled[idx] = 1; break; }
         }
@@ -1216,23 +1786,50 @@ function doFill(c) {
     }
   }
 
-  // 5. Create fill canvas
-  const fc = document.createElement('canvas');
-  fc.width = w; fc.height = h;
-  const fctx = fc.getContext('2d');
-  const fillData = fctx.createImageData(w, h);
-  const fd = fillData.data;
-  for (let i = 0; i < filled.length; i++) {
-    if (filled[i]) {
-      const pi = i * 4;
-      fd[pi] = fr; fd[pi + 1] = fg; fd[pi + 2] = fb; fd[pi + 3] = fa;
-    }
+
+
+  // 5. Build vector polygon instead of bitmap
+  // contours expects a flat array of numbers. `filled` is a Uint8Array of 1s and 0s.
+  const contourPolys = contours().size([w, h]).thresholds([0.5])(Array.from(filled));
+  if (!contourPolys || contourPolys.length === 0 || !contourPolys[0].coordinates.length) return;
+
+  // contourPolys[0] contains the MultiPolygon for value 0.5.
+  // The first Polygon in the MultiPolygon represents the largest filled connected component.
+  const coords = contourPolys[0].coordinates[0];
+  if (!coords || coords.length === 0) return;
+
+  // The first ring is the outer boundary
+  let outerPts = coords[0].map(p => ({ x: p[0], y: p[1] }));
+  outerPts = smoothPath(outerPts, 2);
+  outerPts = simplifyPath(outerPts, 0.2);
+
+  // Subsequent rings are holes
+  const holes = [];
+  for (let i = 1; i < coords.length; i++) {
+    let holePts = coords[i].map(p => ({ x: p[0], y: p[1] }));
+    holePts = smoothPath(holePts, 2);
+    holePts = simplifyPath(holePts, 0.2);
+    if (holePts.length > 2) holes.push(holePts);
   }
-  fctx.putImageData(fillData, 0, 0);
-  obs(S.frameIdx, l.id).push({ type: 'fill', fc, opacity: S.opacity });
-  dirtyCache();
-  render();
-  saveSnapshot();
+
+  obs(S.frameIdx, l.id).push({
+    uid: Math.random().toString(36).substr(2, 9),
+    type: 'fillPath',
+    pts: outerPts,
+    holes: holes.length > 0 ? holes : undefined,
+    color: S.stroke,
+    opacity: S.opacity
+  });
+  const newIdx = obs(S.frameIdx, l.id).length - 1;
+  S.selObjs.push({ layerId: l.id, idx: newIdx });
+  
+  if (S.selObjs.length > 1) {
+    groupSelected(true);
+  } else {
+    dirtyCache();
+    render();
+    saveSnapshot();
+  }
 }
 
 // ---- Text tool ----
@@ -1251,7 +1848,6 @@ function doText(e) {
   _textInput.dataset.x = p.x;
   _textInput.dataset.y = p.y;
   document.body.appendChild(_textInput);
-  // Delay focus to ensure input is in DOM and ready
   requestAnimationFrame(() => {
     if (_textInput) _textInput.focus();
   });
@@ -1272,7 +1868,7 @@ function finishText() {
   const l = L();
   if (!l) return;
   const size = Math.max(8, S.size * 3);
-  obs(S.frameIdx, l.id).push({
+  obs(S.frameIdx, l.id).push({ uid: Math.random().toString(36).substr(2, 9),
     type: 'text',
     text: val,
     x, y,
@@ -1289,7 +1885,6 @@ async function importImage() {
   if (!result) return;
   const data = await window.api?.readFileBinary?.(result);
   if (!data) {
-    // Fallback: use an <input type=file>
     const inp = document.createElement('input');
     inp.type = 'file';
     inp.accept = 'image/png,image/jpeg,image/gif,image/webp';
@@ -1305,7 +1900,7 @@ async function importImage() {
           fc.getContext('2d').drawImage(img, 0, 0);
           const l = L();
           if (l) {
-            obs(S.frameIdx, l.id).push({ type: 'fill', fc, opacity: 1 });
+            obs(S.frameIdx, l.id).push({ uid: Math.random().toString(36).substr(2, 9), type: 'fill', fc, opacity: 1 });
             dirtyCache(); render();  saveSnapshot();
           }
         };
@@ -1324,7 +1919,7 @@ async function importImage() {
     fc.getContext('2d').drawImage(img, 0, 0);
     const l = L();
     if (l) {
-      obs(S.frameIdx, l.id).push({ type: 'fill', fc, opacity: 1 });
+      obs(S.frameIdx, l.id).push({ uid: Math.random().toString(36).substr(2, 9), type: 'fill', fc, opacity: 1 });
       dirtyCache(); render();  saveSnapshot();
     }
   };
@@ -1349,61 +1944,9 @@ function checkAutoSave() {
 function clearAutoSave() {
   try { localStorage.removeItem(AS_KEY + '_meta'); } catch(e) {}
 }
-function getObjBounds(o) {
-  let b;
-  if (o.type === 'stroke' && o.pts && o.pts.length) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of o.pts) { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; }
-    const pad = o.size / 2 + 2;
-    b = { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
-  } else if (o.type === 'stroke' && o.subs && o.subs.length) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const sub of o.subs) { for (const p of sub.pts) { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; } }
-    let maxPad = 0;
-    for (const sub of o.subs) { const sz = sub.size !== undefined ? sub.size : o.size; if (sz / 2 + 2 > maxPad) maxPad = sz / 2 + 2; }
-    b = { x: minX - maxPad, y: minY - maxPad, w: maxX - minX + maxPad * 2, h: maxY - minY + maxPad * 2 };
-  } else if (o.type === 'line') {
-    const x1 = Math.min(o.x1, o.x2), y1 = Math.min(o.y1, o.y2), x2 = Math.max(o.x1, o.x2), y2 = Math.max(o.y1, o.y2);
-    const pad = o.size / 2 + 2;
-    b = { x: x1 - pad, y: y1 - pad, w: x2 - x1 + pad * 2, h: y2 - y1 + pad * 2 };
-  } else if (o.type === 'rect' || o.type === 'circle') {
-    const x1 = Math.min(o.x1, o.x2), y1 = Math.min(o.y1, o.y2), x2 = Math.max(o.x1, o.x2), y2 = Math.max(o.y1, o.y2);
-    const pad = (o.size || 0) / 2 + 2;
-    b = { x: x1 - pad, y: y1 - pad, w: (x2 - x1 || 1) + pad * 2, h: (y2 - y1 || 1) + pad * 2 };
-  } else if (o.type === 'fill') b = { x: 0, y: 0, w: S.w, h: S.h };
-  else if (o.type === 'text') {
-    const lines = (o.text || '').split('\n');
-    const h = lines.length * o.size * 1.3;
-    const w = Math.max(...lines.map(l => l.length)) * o.size * 0.6;
-    b = { x: o.x - 2, y: o.y - 2, w: w + 4, h: h + 4 };
-  } else if (o.type === 'group' && o.children) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const c of o.children) {
-      const cb = getObjBounds(c);
-      minX = Math.min(minX, cb.x); minY = Math.min(minY, cb.y);
-      maxX = Math.max(maxX, cb.x + cb.w); maxY = Math.max(maxY, cb.y + cb.h);
-    }
-    b = { x: minX === Infinity ? 0 : minX, y: minY === Infinity ? 0 : minY, w: maxX === -Infinity ? 0 : maxX - minX, h: maxY === -Infinity ? 0 : maxY - minY };
-  } else b = { x: 0, y: 0, w: 0, h: 0 };
-  // Rotate bounds if object has angle
-  if (o.angle) {
-    const c = getObjCenter(o);
-    const cos = Math.cos(o.angle), sin = Math.sin(o.angle);
-    const corners = [
-      { x: b.x, y: b.y }, { x: b.x + b.w, y: b.y },
-      { x: b.x, y: b.y + b.h }, { x: b.x + b.w, y: b.y + b.h },
-    ];
-    let mnX = Infinity, mnY = Infinity, mxX = -Infinity, mxY = -Infinity;
-    for (const cr of corners) {
-      const rx = c.x + (cr.x - c.x) * cos - (cr.y - c.y) * sin;
-      const ry = c.y + (cr.x - c.x) * sin + (cr.y - c.y) * cos;
-      if (rx < mnX) mnX = rx; if (ry < mnY) mnY = ry;
-      if (rx > mxX) mxX = rx; if (ry > mxY) mxY = ry;
-    }
-    b = { x: mnX, y: mnY, w: mxX - mnX, h: mxY - mnY };
-  }
-  return b;
-}
+
+// ---- Object bounds (with rotation) ----
+
 
 function frameHash(fi, layerId) {
   const f = S.frames[fi];
@@ -1460,12 +2003,26 @@ function getObjCenter(o) {
     const y1 = Math.min(o.y1, o.y2), y2 = Math.max(o.y1, o.y2);
     return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
   }
-  if (o.type === 'fill') return { x: S.w / 2, y: S.h / 2 };
+  if (o.type === 'fill' || o.type === 'fillPath' || o.type === 'group') {
+    const bb = getObjBaseBounds(o);
+    return { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 };
+  }
+  if (o.type === 'symbol') {
+    return { x: o.x || 0, y: o.y || 0 };
+  }
   if (o.type === 'text') {
     const lines = (o.text || '').split('\n');
     const h = lines.length * o.size * 1.3;
     const w = Math.max(...lines.map(l => l.length)) * o.size * 0.6;
     return { x: o.x + w / 2, y: o.y + h / 2 };
+  }
+  if (o.type === 'symbol') {
+    const bb = getObjBaseBounds(o);
+    return { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 };
+  }
+  if (o.type === 'group' && o.children) {
+    const bb = getObjBaseBounds(o);
+    return { x: bb.x + bb.w / 2, y: bb.y + bb.h / 2 };
   }
   return { x: 0, y: 0 };
 }
@@ -1494,8 +2051,15 @@ function getObjMatrix(o) {
   const m = ctx.getTransform();
   return { a: m.a, b: m.b, c: m.c, d: m.d, e: m.e, f: m.f };
 }
+function invertMatrix(m) {
+  const det = m.a * m.d - m.b * m.c;
+  if (Math.abs(det) < 1e-10) return null;
+  const a = m.d / det, b = -m.b / det, c = -m.c / det, d = m.a / det;
+  const e = -(a * m.e + c * m.f), f = -(b * m.e + d * m.f);
+  return { a, b, c, d, e, f };
+}
 function hasTransform(o) {
-  return o && ((o.scaleX != null && o.scaleX !== 1) || (o.scaleY != null && o.scaleY !== 1) || (o.angle && o.angle !== 0) || (o.skewX && o.skewX !== 0) || (o.skewY && o.skewY !== 0) || (o.pivotX != null) || (o.pivotY != null));
+  return o && ((o.scaleX != null && o.scaleX !== 1) || (o.scaleY != null && o.scaleY !== 1) || (o.angle && o.angle !== 0) || (o.skewX && o.skewX !== 0) || (o.skewY && o.skewY !== 0));
 }
 function getObjBaseBounds(o) {
   let b;
@@ -1518,20 +2082,55 @@ function getObjBaseBounds(o) {
     const x1 = Math.min(o.x1, o.x2), y1 = Math.min(o.y1, o.y2), x2 = Math.max(o.x1, o.x2), y2 = Math.max(o.y1, o.y2);
     const pad = (o.size || 0) / 2 + 2;
     b = { x: x1 - pad, y: y1 - pad, w: (x2 - x1 || 1) + pad * 2, h: (y2 - y1 || 1) + pad * 2 };
-  } else if (o.type === 'fill') b = { x: 0, y: 0, w: S.w, h: S.h };
-  else if (o.type === 'text') {
-    const lines = (o.text || '').split('\n');
-    const h = lines.length * o.size * 1.3;
-    const w = Math.max(...lines.map(l => l.length)) * o.size * 0.6;
-    b = { x: o.x - 2, y: o.y - 2, w: w + 4, h: h + 4 };
+  } else if (o.type === 'fill') {
+    const fw = o.fc ? o.fc.width : S.w;
+    const fh = o.fc ? o.fc.height : S.h;
+    b = { x: o.x || 0, y: o.y || 0, w: fw, h: fh };
+  } else if (o.type === 'fillPath' && o.pts && o.pts.length) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of o.pts) { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; }
+    b = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
   } else if (o.type === 'group' && o.children) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const c of o.children) {
       const cb = getObjBaseBounds(c);
-      minX = Math.min(minX, cb.x); minY = Math.min(minY, cb.y);
-      maxX = Math.max(maxX, cb.x + cb.w); maxY = Math.max(maxY, cb.y + cb.h);
+      if (cb && cb.w !== undefined) {
+        if (cb.x < minX) minX = cb.x; if (cb.y < minY) minY = cb.y;
+        if (cb.x + cb.w > maxX) maxX = cb.x + cb.w; if (cb.y + cb.h > maxY) maxY = cb.y + cb.h;
+      }
     }
     b = { x: minX === Infinity ? 0 : minX, y: minY === Infinity ? 0 : minY, w: maxX === -Infinity ? 0 : maxX - minX, h: maxY === -Infinity ? 0 : maxY - minY };
+  } else if (o.type === 'text') {
+    const lines = (o.text || '').split('\n');
+    const h = lines.length * o.size * 1.3;
+    const w = Math.max(...lines.map(l => l.length)) * o.size * 0.6;
+    b = { x: o.x - 2, y: o.y - 2, w: w + 4, h: h + 4 };
+  } else if (o.type === 'symbol') {
+    const sym = Symbols[o.symbolId];
+    if (sym && sym.children && sym.children.length) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const c of sym.children) {
+        const cb = getObjBaseBounds(c);
+        minX = Math.min(minX, cb.x); minY = Math.min(minY, cb.y);
+        maxX = Math.max(maxX, cb.x + cb.w); maxY = Math.max(maxY, cb.y + cb.h);
+      }
+      const ox = o.x || 0, oy = o.y || 0;
+      b = { x: minX + ox, y: minY + oy, w: maxX === -Infinity ? 0 : maxX - minX, h: maxY === -Infinity ? 0 : maxY - minY };
+    } else {
+      b = { x: o.x || 0, y: o.y || 0, w: 0, h: 0 };
+    }
+  } else if (o.type === 'group' && o.children) {
+    if (o.children.length) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const c of o.children) {
+        const cb = getObjBaseBounds(c);
+        minX = Math.min(minX, cb.x); minY = Math.min(minY, cb.y);
+        maxX = Math.max(maxX, cb.x + cb.w); maxY = Math.max(maxY, cb.y + cb.h);
+      }
+      b = { x: minX, y: minY, w: maxX === -Infinity ? 0 : maxX - minX, h: maxY === -Infinity ? 0 : maxY - minY };
+    } else {
+      b = { x: 0, y: 0, w: 0, h: 0 };
+    }
   } else b = { x: 0, y: 0, w: 0, h: 0 };
   return b;
 }
@@ -1599,7 +2198,9 @@ function hitTest(p) {
             if (hit) break;
           }
           if (hit) return { layerId: l.id, idx: i };
-        } else if (o.type === 'rect' || o.type === 'fill') {
+        } else if (o.type === 'fill' || o.type === 'fillPath') {
+          return { layerId: l.id, idx: i };
+        } else if (o.type === 'rect') {
           const tol = (o.size || 0) / 2 + 3;
           const x1 = Math.min(o.x1, o.x2), x2 = Math.max(o.x1, o.x2);
           const y1 = Math.min(o.y1, o.y2), y2 = Math.max(o.y1, o.y2);
@@ -1693,12 +2294,7 @@ function hitHandle(p) {
   const o = objs[selObj().idx];
   if (!o) return null;
   const c = getObjCenter(o);
-  const px = o.pivotX != null ? o.pivotX : c.x;
-  const py = o.pivotY != null ? o.pivotY : c.y;
-  const m = hasTransform(o) ? getObjMatrix(o) : { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
-  const pivotWorldX = m.a * px + m.c * py + m.e;
-  const pivotWorldY = m.b * px + m.d * py + m.f;
-  if ((p.x - pivotWorldX) ** 2 + (p.y - pivotWorldY) ** 2 < 64) return 'pivot';
+
   const handles = getTransformedHandles(o);
   const tc = getObjTransformedCorners(o);
   for (const h of handles) {
@@ -1777,6 +2373,14 @@ function drawSelection() {
   const bs = bufScale();
   octx.save();
   if (bs !== 1) octx.scale(bs, bs);
+  const f = S.frames[S.frameIdx];
+  if (f && f.cam) {
+    const cx = S.w / 2, cy = S.h / 2;
+    octx.translate(cx, cy);
+    octx.scale(f.cam.zoom, f.cam.zoom);
+    octx.rotate(f.cam.rotation * Math.PI / 180);
+    octx.translate(-cx + f.cam.x, -cy + f.cam.y);
+  }
   for (const ref of S.selObjs) {
     const objs = obs(S.frameIdx, ref.layerId);
     const o = objs[ref.idx];
@@ -1807,23 +2411,6 @@ function drawSelection() {
   octx.closePath();
   octx.stroke();
   octx.setLineDash([]);
-  // Pivot point
-  const c = getObjCenter(o);
-  const px = o.pivotX != null ? o.pivotX : c.x;
-  const py = o.pivotY != null ? o.pivotY : c.y;
-  const m = hasTransform(o) ? getObjMatrix(o) : { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
-  const pwx = m.a * px + m.c * py + m.e;
-  const pwy = m.b * px + m.d * py + m.f;
-  octx.strokeStyle = '#f80';
-  octx.lineWidth = 1;
-  octx.beginPath();
-  octx.moveTo(pwx - 8, pwy); octx.lineTo(pwx + 8, pwy);
-  octx.moveTo(pwx, pwy - 8); octx.lineTo(pwx, pwy + 8);
-  octx.stroke();
-  octx.beginPath();
-  octx.arc(pwx, pwy, 3, 0, Math.PI * 2);
-  octx.fillStyle = '#f80';
-  octx.fill();
   // Corner handles + rotate zones (use transformed positions)
   const handles = getTransformedHandles(o);
   for (const h of handles) {
@@ -1897,34 +2484,61 @@ function moveObjBy(o, dx, dy) {
   if (o.type === 'stroke') {
     if (o.pts) for (const p of o.pts) { p.x += dx; p.y += dy; }
     if (o.subs) for (const sub of o.subs) for (const p of sub.pts) { p.x += dx; p.y += dy; }
+    if (o.erasers) for (const er of o.erasers) for (const p of er.pts) { p.x += dx; p.y += dy; }
   } else if (o.type === 'text') {
     o.x += dx; o.y += dy;
   } else if (o.type === 'fill') {
-    if (o.fc) { o.fc.x += dx; o.fc.y += dy; }
+    o.x = (o.x || 0) + dx;
+    o.y = (o.y || 0) + dy;
+  } else if (o.type === 'fillPath') {
+    if (o.pts) for (const p of o.pts) { p.x += dx; p.y += dy; }
+    if (o.holes) for (const hole of o.holes) for (const p of hole) { p.x += dx; p.y += dy; }
+    if (o.eraserX !== undefined) o.eraserX += dx;
+    if (o.eraserY !== undefined) o.eraserY += dy;
   } else if (o.type === 'group' && o.children) {
     for (const child of o.children) moveObjBy(child, dx, dy);
+  } else if (o.type === 'symbol') {
+    // You cannot move children of a symbol directly, you move the instance!
+    o.x = (o.x || 0) + dx;
+    o.y = (o.y || 0) + dy;
   } else if (o.pts) {
     for (const p of o.pts) { p.x += dx; p.y += dy; }
+  }
+  // Also move sub-strokes
+  if (o.subs) {
+    for (const sub of o.subs) {
+      if (sub.pts) for (const p of sub.pts) { p.x += dx; p.y += dy; }
+    }
   }
   if (o.x1 != null) { o.x1 += dx; o.y1 += dy; o.x2 += dx; o.y2 += dy; }
   if (o.pivotX != null) o.pivotX += dx;
   if (o.pivotY != null) o.pivotY += dy;
 }
 
-function cloneObj(o) {
+function cloneObj(o, keepUid = false) {
   const c = {};
   for (const k of Object.keys(o)) {
-    if (k === 'pts') c.pts = o.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) }));
-    else if (k === 'subs') c.subs = o.subs.map(sub => ({ ...sub, pts: sub.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) })) }));
-    else if (k === 'children') c.children = o.children.map(child => cloneObj(child));
+    if (k === 'uid') continue;
+    if (k === 'pts' && o.pts) c.pts = o.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) }));
+    else if (k === 'holes' && o.holes) c.holes = o.holes.map(hole => hole.map(p => ({ x: p.x, y: p.y })));
+    else if (k === 'subs' && o.subs) c.subs = o.subs.map(sub => ({ ...sub, pts: sub.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) })) }));
+    else if (k === 'children' && o.children) c.children = o.children.map(child => cloneObj(child));
     else if (k === 'fc' && o.fc) {
       const canvas = document.createElement('canvas');
       canvas.width = o.fc.width; canvas.height = o.fc.height;
       canvas.getContext('2d').drawImage(o.fc, 0, 0);
       c.fc = canvas;
     }
+    else if (k === 'eraserFc' && o.eraserFc) {
+      const canvas = document.createElement('canvas');
+      canvas.width = o.eraserFc.width; canvas.height = o.eraserFc.height;
+      canvas.getContext('2d').drawImage(o.eraserFc, 0, 0);
+      c.eraserFc = canvas;
+    }
+    else if (k === 'erasers' && o.erasers) c.erasers = o.erasers.map(e => ({ ...e, pts: e.pts.map(p => ({ x: p.x, y: p.y })) }));
     else c[k] = o[k];
   }
+    c.uid = keepUid && o.uid ? o.uid : Math.random().toString(36).substr(2, 9);
   return c;
 }
 
@@ -2012,6 +2626,32 @@ function selDown(p, ctrl, alt) {
   octx.clearRect(0, 0, overlay.width, overlay.height);
 }
 
+function applyMoveToChild(child, cinit, dx, dy) {
+  if (!child || !cinit) return;
+  if (child.type === 'stroke' || child.type === 'fillPath') {
+    if (cinit.pts) child.pts = cinit.pts.map(pt => ({ x: pt.x + dx, y: pt.y + dy, ...(pt.p !== undefined ? { p: pt.p } : {}) }));
+    if (cinit.holes) child.holes = cinit.holes.map(hole => hole.map(pt => ({ x: pt.x + dx, y: pt.y + dy })));
+    if (cinit.subs) child.subs = cinit.subs.map(sub => ({ ...sub, pts: sub.pts.map(pt => ({ x: pt.x + dx, y: pt.y + dy, ...(pt.p !== undefined ? { p: pt.p } : {}) })) }));
+  } else if (child.type === 'symbol') {
+    child.x = (cinit.x || 0) + dx;
+    child.y = (cinit.y || 0) + dy;
+  } else if (child.type === 'group' && cinit.children) {
+    for (let i = 0; i < child.children.length; i++) {
+      applyMoveToChild(child.children[i], cinit.children[i], dx, dy);
+    }
+  } else if (child.x1 != null) {
+    child.x1 = cinit.x1 + dx; child.y1 = cinit.y1 + dy;
+    child.x2 = cinit.x2 + dx; child.y2 = cinit.y2 + dy;
+  } else if (child.type === 'text') {
+    child.x = cinit.x + dx; child.y = cinit.y + dy;
+  } else if (child.type === 'fill') {
+    child.x = (cinit.x || 0) + dx;
+    child.y = (cinit.y || 0) + dy;
+  }
+  if (cinit.pivotX != null) child.pivotX = cinit.pivotX + dx;
+  if (cinit.pivotY != null) child.pivotY = cinit.pivotY + dy;
+}
+
 function selMove(p, e) {
   if (S.selMode === 'move' && S.selObjs.length && _multiSelInits.size) {
     const dx = p.x - S.dragStart.x, dy = p.y - S.dragStart.y;
@@ -2020,36 +2660,9 @@ function selMove(p, e) {
       const o = objs[ref.idx];
       const init = _multiSelInits.get(`${ref.layerId}:${ref.idx}`);
       if (!o || !init) continue;
-      if (o.type === 'stroke') {
-        if (init.pts) o.pts = init.pts.map(pt => ({ x: pt.x + dx, y: pt.y + dy, ...(pt.p !== undefined ? { p: pt.p } : {}) }));
-        if (init.subs) o.subs = init.subs.map(sub => ({ ...sub, pts: sub.pts.map(pt => ({ x: pt.x + dx, y: pt.y + dy, ...(pt.p !== undefined ? { p: pt.p } : {}) })) }));
-      } else if (o.type === 'group' && init.children) {
-        for (let ci = 0; ci < o.children.length; ci++) {
-          const child = o.children[ci];
-          const cinit = init.children[ci];
-          if (!child || !cinit) continue;
-          if (child.type === 'stroke') {
-            if (cinit.pts) child.pts = cinit.pts.map(pt => ({ x: pt.x + dx, y: pt.y + dy, ...(pt.p !== undefined ? { p: pt.p } : {}) }));
-            if (cinit.subs) child.subs = cinit.subs.map(sub => ({ ...sub, pts: sub.pts.map(pt => ({ x: pt.x + dx, y: pt.y + dy, ...(pt.p !== undefined ? { p: pt.p } : {}) })) }));
-          } else if (child.x1 != null) {
-            child.x1 = cinit.x1 + dx; child.y1 = cinit.y1 + dy;
-            child.x2 = cinit.x2 + dx; child.y2 = cinit.y2 + dy;
-          } else if (child.type === 'text') {
-            child.x = cinit.x + dx; child.y = cinit.y + dy;
-          }
-          if (cinit.pivotX != null) child.pivotX = cinit.pivotX + dx;
-          if (cinit.pivotY != null) child.pivotY = cinit.pivotY + dy;
-        }
-      } else if (o.x1 != null) {
-        o.x1 = init.x1 + dx; o.y1 = init.y1 + dy;
-        o.x2 = init.x2 + dx; o.y2 = init.y2 + dy;
-      } else if (o.type === 'text') {
-        o.x = init.x + dx; o.y = init.y + dy;
-      }
-      if (init.pivotX != null) o.pivotX = init.pivotX + dx;
-      if (init.pivotY != null) o.pivotY = init.pivotY + dy;
+      applyMoveToChild(o, init, dx, dy);
     }
-    dirtyCache(); render(); drawSelection();
+    dirtyCache(); renderThrottled();
   } else if (S.selMode === 'scale' && selObj() && S.resizeHandle && S.selInit) {
     const l = L(); const objs = obs(S.frameIdx, l.id);
     const o = objs[selObj().idx];
@@ -2097,7 +2710,7 @@ function selMove(p, e) {
       o.pivotX = a.x;
       o.pivotY = a.y;
     }
-    dirtyCache(); render(); drawSelection();
+    dirtyCache(); renderThrottled();
   } else if (S.selMode === 'rotate' && selObj() && S.selInit) {
     const l = L(); const objs = obs(S.frameIdx, l.id);
     const o = objs[selObj().idx];
@@ -2116,7 +2729,7 @@ function selMove(p, e) {
       da = Math.round(da / step) * step;
     }
     o.angle = (S.selInit.angle || 0) + da;
-    dirtyCache(); render(); drawSelection();
+    dirtyCache(); renderThrottled();
   } else if (S.selMode === 'skew' && selObj() && S.selInit) {
     const l = L(); const objs = obs(S.frameIdx, l.id);
     const o = objs[selObj().idx];
@@ -2131,27 +2744,22 @@ function selMove(p, e) {
     } else if (rh === 'e' || rh === 'w') {
       o.skewY = (S.selInit.skewY || 0) + dy * factor;
     }
-    dirtyCache(); render(); drawSelection();
-  } else if (S.selMode === 'pivot' && selObj() && S.selInit) {
-    const l = L(); const objs = obs(S.frameIdx, l.id);
-    const o = objs[selObj().idx];
-    if (!o) return;
-    // Convert world mouse to base coords using initial matrix inverse
-    const initM = getObjMatrix(S.selInit);
-    const det = initM.a * initM.d - initM.b * initM.c;
-    if (Math.abs(det) < 1e-10) return;
-    const invDet = 1 / det;
-    const pbx = invDet * (initM.d * (p.x - initM.e) - initM.c * (p.y - initM.f));
-    const pby = invDet * (-initM.b * (p.x - initM.e) + initM.a * (p.y - initM.f));
-    o.pivotX = pbx;
-    o.pivotY = pby;
-    dirtyCache(); render(); drawSelection();
+    dirtyCache(); renderThrottled();
+
   } else if (_marqueeStart) {
     _marqueeEnd = { x: p.x, y: p.y };
     const bs = bufScale();
     octx.clearRect(0, 0, overlay.width, overlay.height);
     octx.save();
     if (bs !== 1) octx.scale(bs, bs);
+    const f = S.frames[S.frameIdx];
+    if (f && f.cam) {
+      const cx = S.w / 2, cy = S.h / 2;
+      octx.translate(cx, cy);
+      octx.scale(f.cam.zoom, f.cam.zoom);
+      octx.rotate(f.cam.rotation * Math.PI / 180);
+      octx.translate(-cx + f.cam.x, -cy + f.cam.y);
+    }
     const x = Math.min(_marqueeStart.x, p.x), y = Math.min(_marqueeStart.y, p.y);
     const w = Math.abs(p.x - _marqueeStart.x), h = Math.abs(p.y - _marqueeStart.y);
     octx.strokeStyle = '#0af';
@@ -2430,10 +3038,11 @@ function updateTL() {
   const scroll = $('timeline-scroll');
   const targetScroll = S.frameIdx * cellW() - scroll.clientWidth / 2 + cellW() / 2;
   scroll.scrollLeft = Math.max(0, targetScroll);
+  renderAudioTimeline(tlZoom, S.fps);
 }
 
 function thisLayerUpdate() { updateLayerUI(); dirtyCache(); render(); }
-function updateLayerUI() { updateTL(); }
+
 function updateFC() { $('frame-counter').textContent = `Frame: ${S.frameIdx + 1} / ${S.frames.length}  ${Math.round(tlZoom * 100)}%`; }
 
 // ---- Timeline cell click ----
@@ -2575,7 +3184,7 @@ document.addEventListener('mouseup', e => {
               const c = document.createElement('canvas');
               c.width = o.fc.width; c.height = o.fc.height;
               c.getContext('2d').drawImage(o.fc, 0, 0);
-              return { type: 'fill', fc: c, opacity: o.opacity };
+              return { type: 'fill', fc: c, x: o.x || 0, y: o.y || 0, opacity: o.opacity };
             }
             return JSON.parse(JSON.stringify(o, (k, v) => k === 'fc' ? null : v));
           });
@@ -2615,9 +3224,12 @@ function addFrame(onlyActiveLayer, isKeyframe) {
   const nf = { o: {}, key: !!isKeyframe, _hist: [], _histIdx: -1 };
   const targetLayers = onlyActiveLayer && S.activeLayerId != null
     ? new Set([S.activeLayerId])
-    : S.selLayerIds;
+    : new Set(S.selLayerIds);
+  // Always include the active layer
+  if (S.activeLayerId != null) targetLayers.add(S.activeLayerId);
+  console.log(`[addFrame] activeLayerId: ${S.activeLayerId}, targetLayers:`, [...targetLayers], 'isKeyframe:', isKeyframe);
   for (const lid of targetLayers) {
-    nf.o[lid] = src.o[lid] ? src.o[lid].map(cloneObj) : [];
+    nf.o[lid] = src.o[lid] ? src.o[lid].map(o => cloneObj(o, true)) : [];
   }
   const insertAt = S.frameIdx + 1;
   S.frames.splice(insertAt, 0, nf);
@@ -2628,7 +3240,8 @@ function addFrame(onlyActiveLayer, isKeyframe) {
 }
 
 function addEmptyFrame() {
-  const nf = { o: {}, key: true, _hist: [], _histIdx: -1 };
+  const lastF = S.frames[S.frameIdx];
+  const nf = { o: {}, key: true, cam: lastF && lastF.cam ? {...lastF.cam} : { x: 0, y: 0, zoom: 1, rotation: 0 }, _hist: [], _histIdx: -1 };
   for (const lid of S.selLayerIds) {
     nf.o[lid] = [];
   }
@@ -2642,9 +3255,9 @@ function addEmptyFrame() {
 function dupFrame() {
   const src = S.frames[S.frameIdx] || S.frames[0];
   if (!src) return;
-  const nf = { o: {}, key: src.key, _hist: [], _histIdx: -1 };
+  const nf = { o: {}, key: src.key, cam: src.cam ? {...src.cam} : { x: 0, y: 0, zoom: 1, rotation: 0 }, _hist: [], _histIdx: -1 };
   for (const lid of S.selLayerIds) {
-    nf.o[lid] = src.o[lid] ? src.o[lid].map(cloneObj) : [];
+    nf.o[lid] = src.o[lid] ? src.o[lid].map(o => cloneObj(o, true)) : [];
   }
   S.frames.splice(S.frameIdx + 1, 0, nf);
   S.frameIdx++;
@@ -2726,8 +3339,9 @@ function cloneObjDeep(o) {
   if (Array.isArray(o)) return o.map(cloneObjDeep);
   const r = {};
   for (const k of Object.keys(o)) {
-    if (k === 'pts') r.pts = o.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) }));
-    else if (k === 'subs') r.subs = o.subs.map(sub => ({ ...sub, pts: sub.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) })) }));
+    if (k === 'pts' && o.pts) r.pts = o.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) }));
+    else if (k === 'holes' && o.holes) r.holes = o.holes.map(hole => hole.map(p => ({ x: p.x, y: p.y })));
+    else if (k === 'subs' && o.subs) r.subs = o.subs.map(sub => ({ ...sub, pts: sub.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) })) }));
     else if (k === 'fc') { /* handled above */ }
     else if (typeof o[k] === 'object' && o[k] !== null) r[k] = cloneObjDeep(o[k]);
     else r[k] = o[k];
@@ -2737,24 +3351,51 @@ function cloneObjDeep(o) {
 
 function interpObj(a, b, t) {
   const o = {};
-  for (const k of Object.keys(a)) {
-    if (k === 'pts' && a.pts && b && b.pts) {
-      const max = Math.max(a.pts.length, b.pts.length);
+  // Merge keys from both objects to catch properties that exist only on one side
+  const allKeys = new Set([...Object.keys(a), ...(b ? Object.keys(b) : [])]);
+  for (const k of allKeys) {
+    if (k === 'pts' && (a.pts || (b && b.pts))) {
+      const aPts = a.pts || (b && b.pts) || [];
+      const bPts = (b && b.pts) || aPts;
+      const max = Math.max(aPts.length, bPts.length);
         o.pts = [];
         for (let i = 0; i < max; i++) {
-          const ap = a.pts[Math.min(i, a.pts.length - 1)];
-          const bp = b.pts[Math.min(i, b.pts.length - 1)];
+          const ap = aPts[Math.min(i, aPts.length - 1)];
+          const bp = bPts[Math.min(i, bPts.length - 1)];
           const pt = { x: ap.x + (bp.x - ap.x) * t, y: ap.y + (bp.y - ap.y) * t };
           if (ap.p !== undefined || bp.p !== undefined) pt.p = ((ap.p !== undefined ? ap.p : 1) + ((bp.p !== undefined ? bp.p : 1) - (ap.p !== undefined ? ap.p : 1)) * t);
           o.pts.push(pt);
         }
     } else if (k === 'color' || k === 'fillColor') {
-      if (b && b[k]) o[k] = interpColor(a[k] || '#000000', b[k], t);
-      else o[k] = a[k];
+      const ac = a[k] || '#000000', bc = (b && b[k]) || ac;
+      o[k] = interpColor(ac, bc, t);
+    } else if (k === 'holes' && (a.holes || (b && b.holes))) {
+      const aHoles = a.holes || [];
+      const bHoles = (b && b.holes) || aHoles;
+      const maxHoles = Math.max(aHoles.length, bHoles.length);
+      o.holes = [];
+      for (let hi = 0; hi < maxHoles; hi++) {
+        const aHole = aHoles[Math.min(hi, aHoles.length - 1)] || [];
+        const bHole = bHoles[Math.min(hi, bHoles.length - 1)] || aHole;
+        const maxPts = Math.max(aHole.length, bHole.length);
+        const pts = [];
+        for (let i = 0; i < maxPts; i++) {
+          const ap = aHole[Math.min(i, aHole.length - 1)];
+          const bp = bHole[Math.min(i, bHole.length - 1)];
+          if (ap && bp) pts.push({ x: ap.x + (bp.x - ap.x) * t, y: ap.y + (bp.y - ap.y) * t });
+          else if (ap) pts.push({ x: ap.x, y: ap.y });
+          else if (bp) pts.push({ x: bp.x, y: bp.y });
+        }
+        if (pts.length > 2) o.holes.push(pts);
+      }
     } else if (k === 'subs') {
-      // Interpolate each sub-stroke's points; keep per-sub size/color/opacity
-      o.subs = a.subs.map((sub, idx) => {
-        const bSub = b && b.subs && idx < b.subs.length ? b.subs[idx] : null;
+      const aSubs = a.subs || [];
+      const bSubs = (b && b.subs) || [];
+      const maxSubs = Math.max(aSubs.length, bSubs.length);
+      o.subs = [];
+      for (let si = 0; si < maxSubs; si++) {
+        const sub = aSubs[Math.min(si, aSubs.length - 1)];
+        const bSub = bSubs[si] || null;
         const max = Math.max(sub.pts.length, bSub ? bSub.pts.length : sub.pts.length);
         const pts = [];
         for (let i = 0; i < max; i++) {
@@ -2765,17 +3406,19 @@ function interpObj(a, b, t) {
           pts.push(pi);
         }
         const r = { ...sub, pts };
-        // Interpolate size if both have it
         if (bSub && bSub.size !== undefined && sub.size !== undefined) {
           r.size = sub.size + (bSub.size - sub.size) * t;
         }
-        return r;
-      });
-    } else if (['x1','y1','x2','y2','size','opacity','angle'].includes(k)) {
-      const av = a[k] || 0, bv = (b && b[k] != null) ? b[k] : av;
+        o.subs.push(r);
+      }
+    } else if (['x1','y1','x2','y2','size','opacity','angle','sx','sy','rot','x','y','scaleX','scaleY','rotation','pivotX','pivotY','skewX','skewY'].includes(k)) {
+      // Numeric interpolation with proper defaults (scaleX/scaleY default to 1)
+      const defaultVal = (k === 'scaleX' || k === 'scaleY' || k === 'sx' || k === 'sy') ? 1 : 0;
+      const av = a[k] != null ? a[k] : defaultVal;
+      const bv = (b && b[k] != null) ? b[k] : defaultVal;
       o[k] = av + (bv - av) * t;
-    } else if (k !== 'fc' && k !== 'composite') {
-      o[k] = a[k];
+    } else if (k !== 'fc' && k !== 'composite' && k !== 'uid') {
+      o[k] = a[k] != null ? a[k] : (b ? b[k] : undefined);
     }
   }
   if (o.type === 'stroke' && o.pts && a.pts && a.pts.length > 1 && (!b || !b.pts)) {
@@ -2789,6 +3432,7 @@ function rebuildTweens() {
   for (let i = 0; i < S.frames.length; i++) {
     if (S.frames[i].key) keys.push(i);
   }
+  console.log(`[rebuildTweens] lid: ${lid}, keys:`, keys, 'total frames:', S.frames.length);
   if (keys.length < 2) return;
 
   for (let k = 0; k < keys.length - 1; k++) {
@@ -2799,6 +3443,19 @@ function rebuildTweens() {
     const toF = S.frames[to];
     const fObs = fromF.o[lid] || [];
     const tObs = toF.o[lid] || [];
+    console.log(`[rebuildTweens] from: ${from}, to: ${to}, fObs.length: ${fObs.length}, tObs.length: ${tObs.length}`);
+    if (fObs.length > 0) {
+      const fo = fObs[0], to2 = tObs[0];
+      console.log(`[rebuildTweens] fObs[0]: type=${fo.type}, uid=${fo.uid}`);
+      if (to2) console.log(`[rebuildTweens] tObs[0]: type=${to2.type}, uid=${to2.uid}`);
+      // Show first point of each to verify they differ
+      if (fo.pts?.length) console.log(`[rebuildTweens] FROM pts[0]: x=${fo.pts[0].x.toFixed(1)}, y=${fo.pts[0].y.toFixed(1)}, last: x=${fo.pts[fo.pts.length-1].x.toFixed(1)}, y=${fo.pts[fo.pts.length-1].y.toFixed(1)}`);
+      if (to2?.pts?.length) console.log(`[rebuildTweens] TO pts[0]: x=${to2.pts[0].x.toFixed(1)}, y=${to2.pts[0].y.toFixed(1)}, last: x=${to2.pts[to2.pts.length-1].x.toFixed(1)}, y=${to2.pts[to2.pts.length-1].y.toFixed(1)}`);
+      if (fo.subs?.length) console.log(`[rebuildTweens] FROM has ${fo.subs.length} subs, subs[0].pts[0]: x=${fo.subs[0].pts[0].x.toFixed(1)}, y=${fo.subs[0].pts[0].y.toFixed(1)}`);
+      if (to2?.subs?.length) console.log(`[rebuildTweens] TO has ${to2.subs.length} subs, subs[0].pts[0]: x=${to2.subs[0].pts[0].x.toFixed(1)}, y=${to2.subs[0].pts[0].y.toFixed(1)}`);
+      // Are they the same reference?
+      console.log(`[rebuildTweens] same reference? ${fObs[0] === tObs[0]}, pts same ref? ${fObs[0].pts === tObs[0]?.pts}`);
+    }
 
     for (let fi = from + 1; fi < to; fi++) {
       const raw = (fi - from) / (to - from);
@@ -2806,28 +3463,44 @@ function rebuildTweens() {
       const fr = S.frames[fi];
       fr.key = false;
 
-      const mx = Math.max(fObs.length, tObs.length);
       const out = [];
-
-      for (let oi = 0; oi < mx; oi++) {
-        const fo = fObs[oi], to = tObs[oi];
-        if (fo && to && fo.type === to.type) {
+      for (let oi = 0; oi < fObs.length; oi++) {
+        const fo = fObs[oi];
+        const toObj = tObs.find(o => fo.uid && o.uid === fo.uid) || tObs[oi];
+        console.log(`[rebuildTweens] oi=${oi}, fo.type=${fo.type}, toObj.type=${toObj?.type}, match=${fo.type === toObj?.type}`);
+        if (fo && toObj && fo.type === toObj.type) {
           if (fo.type === 'fill') {
             const c = document.createElement('canvas');
             c.width = fo.fc.width; c.height = fo.fc.height;
             const cx = c.getContext('2d');
             cx.globalAlpha = 1 - t; cx.drawImage(fo.fc, 0, 0);
-            cx.globalAlpha = t; cx.drawImage(to.fc, 0, 0);
-            out.push({ type: 'fill', fc: c, opacity: fo.opacity + (to.opacity - fo.opacity) * t });
+            cx.globalAlpha = t; cx.drawImage(toObj.fc, 0, 0);
+            out.push({ uid: fo.uid, type: 'fill', fc: c, x: fo.x || 0, y: fo.y || 0, opacity: fo.opacity + (toObj.opacity - fo.opacity) * t });
           } else {
-            out.push(interpObj(fo, to, t));
+            const io = interpObj(fo, toObj, t);
+            io.uid = fo.uid;
+            out.push(io);
+            console.log(`[rebuildTweens] interpolated frame ${fi}: type=${io.type}`);
           }
-        } else if (fo && !to) {
-          out.push(fo.fc ? cloneFill(fo) : interpObj(fo, fo, 0));
+        } else if (fo) {
+          const cloned = fo.fc ? cloneFill(fo) : interpObj(fo, fo, 0);
+          cloned.uid = fo.uid;
+          out.push(cloned);
         }
+      }
+      
+      // Also tween the camera!
+      if (fromF.cam && toF.cam) {
+         fr.cam = {
+            x: fromF.cam.x + (toF.cam.x - fromF.cam.x) * t,
+            y: fromF.cam.y + (toF.cam.y - fromF.cam.y) * t,
+            zoom: fromF.cam.zoom + (toF.cam.zoom - fromF.cam.zoom) * t,
+            rotation: fromF.cam.rotation + (toF.cam.rotation - fromF.cam.rotation) * t
+         };
       }
       if (!fr.o[lid]) fr.o[lid] = [];
       fr.o[lid] = out;
+      console.log(`[rebuildTweens] frame ${fi}: out.length=${out.length}`);
     }
   }
 }
@@ -2848,7 +3521,7 @@ function cloneFill(o) {
   const c = document.createElement('canvas');
   c.width = o.fc.width; c.height = o.fc.height;
   c.getContext('2d').drawImage(o.fc, 0, 0);
-  return { type: 'fill', fc: c, opacity: o.opacity };
+  return { type: 'fill', fc: c, x: o.x || 0, y: o.y || 0, opacity: o.opacity };
 }
 
 // ==================== PLAYBACK ====================
@@ -2882,6 +3555,8 @@ const icons = {
   first: '<svg viewBox="0 0 16 16"><polygon points="10,2 3,8 10,14" fill="currentColor"/><line x1="13" y1="2" x2="13" y2="14" stroke="currentColor" stroke-width="1.5"/></svg>',
   last: '<svg viewBox="0 0 16 16"><polygon points="6,2 13,8 6,14" fill="currentColor"/><line x1="3" y1="2" x2="3" y2="14" stroke="currentColor" stroke-width="1.5"/></svg>',
   guide: '<svg viewBox="0 0 22 22"><path d="M3 11c4 0 4-6 8-6s4 6 8 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="11" cy="5" r="2" fill="currentColor"/><circle cx="19" cy="11" r="2" fill="currentColor"/></svg>',
+  camera: '<svg viewBox="0 0 24 24"><path d="M15 8h4v8h-4z" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3" y="6" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="19" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.5"/></svg>',
+  symbol: '<svg viewBox="0 0 16 16"><path d="M8 2l4 2v4l-4 2-4-2V4z" fill="none" stroke="currentColor" stroke-width="1.5"/><polyline points="8,10 8,6" fill="none" stroke="currentColor" stroke-width="1.5"/><polyline points="4,4 8,6 12,4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
   import: '<svg viewBox="0 0 20 20"><g transform="scale(1,-1) translate(0,-20)"><rect x="3" y="7" width="14" height="10" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/><polyline points="7,3 10,0 13,3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="10" y1="0" x2="10" y2="7" stroke="currentColor" stroke-width="1.5"/></g></svg>',
   // Timeline icons
   eyeOpen: '<svg viewBox="0 0 16 16"><ellipse cx="8" cy="8" rx="6" ry="4" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>',
@@ -2909,22 +3584,20 @@ const icons = {
 
 function play() {
   S.playing = !S.playing;
-  const b = $('play-btn');
-  if (b) {
-    b.classList.toggle('active', S.playing);
-    b.innerHTML = S.playing ? icons.pause : icons.play;
-  }
-  // Update new timeline play button too
   const tlBtn = $('tl-play-btn');
   if (tlBtn) tlBtn.innerHTML = S.playing ? icons.pause : icons.play;
   if (S.playing) {
+    playAudioAtFrame(S.frameIdx, S.fps);
     _pi = setInterval(() => {
       if (S.frameIdx < S.frames.length - 1) S.frameIdx++;
-      else if (S.loop) S.frameIdx = 0;
+      else if (S.loop) {
+        S.frameIdx = 0;
+        loopAudioPlay();
+      }
       else { play(); return; }
       updateTL(); fullRender();
     }, 1000 / S.fps);
-  } else { clearInterval(_pi); _pi = null; }
+  } else { clearInterval(_pi); _pi = null; pauseAudio(); }
 }
 
 // ==================== ZOOM & PAN ====================
@@ -2999,7 +3672,7 @@ $('export-start-btn').onclick = async () => {
   $('export-modal').classList.add('hidden');
   if (f === 'png-sequence') await expPNG(fn, s, e, sc);
   else if (f === 'gif') await expGIF(fn, s, e, sc, ef);
-  else if (f === 'webm') await expWebM(fn, s, e, sc, ef);
+  else if (f === 'mp4') await expMP4(fn, s, e, sc, ef);
   else if (f === 'sprite-sheet') await expSpriteSheet(fn, s, e, sc);
 };
 
@@ -3042,29 +3715,53 @@ async function expGIF(fn, s, e, sc, fps) {
   gif.render();
 }
 
-async function expWebM(fn, s, e, sc, fps) {
-  const fp = await ipcRenderer.invoke('save-file', { defaultName: `${fn}.webm`, filters: [{ name: 'WebM', extensions: ['webm'] }] });
+async function expMP4(fn, s, e, sc, fps) {
+  const fp = await ipcRenderer.invoke('save-file', { defaultName: `${fn}.mp4`, filters: [{ name: 'MP4 Video', extensions: ['mp4'] }] });
   if (!fp) return;
-  const w = S.w * sc, h = S.h * sc;
+  const frames = [];
   const ec = document.createElement('canvas');
-  ec.width = w; ec.height = h;
+  ec.width = S.w * sc; ec.height = S.h * sc;
   const ecx = ec.getContext('2d');
-  const stream = ec.captureStream(fps);
-  const mr = new MediaRecorder(stream, { mimeType: 'video/webm' });
-  const chunks = [];
-  mr.ondataavailable = e => chunks.push(e.data);
-  mr.onstop = () => {
-    const r = new FileReader();
-    r.onload = () => { require('fs').writeFileSync(fp, Buffer.from(r.result)); alert(`Video → ${fp}`); };
-    r.readAsArrayBuffer(new Blob(chunks, { type: 'video/webm' }));
-  };
-  mr.start();
+  
+  // Create an overlay to show progress since this might take a while
+  const overlay = document.createElement('div');
+  overlay.style.position = 'fixed';
+  overlay.style.top = '0'; overlay.style.left = '0';
+  overlay.style.width = '100vw'; overlay.style.height = '100vh';
+  overlay.style.background = 'rgba(0,0,0,0.8)';
+  overlay.style.color = 'white';
+  overlay.style.display = 'flex';
+  overlay.style.alignItems = 'center';
+  overlay.style.justifyContent = 'center';
+  overlay.style.zIndex = '999999';
+  overlay.style.fontSize = '24px';
+  overlay.innerText = 'Rendering Frames...';
+  document.body.appendChild(overlay);
+
+  // Use a timeout to allow DOM to update
+  await new Promise(r => setTimeout(r, 50));
+
   for (let i = s; i < e; i++) {
-    ecx.clearRect(0, 0, w, h);
+    ecx.clearRect(0, 0, ec.width, ec.height);
+    // Draw white background for MP4 since alpha transparency isn't supported in standard h264
+    ecx.fillStyle = '#ffffff';
+    ecx.fillRect(0, 0, ec.width, ec.height);
     expFrame(i, ecx, sc);
-    await new Promise(r => setTimeout(r, 1000 / fps));
+    frames.push(ec.toDataURL('image/png'));
   }
-  mr.stop();
+
+  overlay.innerText = 'Encoding Video... This may take a minute.';
+  await new Promise(r => setTimeout(r, 50));
+
+  const audioBase64 = Globals.bgAudioData || null;
+
+  const r = await ipcRenderer.invoke('export-mp4', { frames, fps, filePath: fp, audioBase64 });
+  document.body.removeChild(overlay);
+  if (r.success) {
+    alert(`Video → ${fp}`);
+  } else {
+    alert(`Error: ${r.error}`);
+  }
 }
 
 async function expSpriteSheet(fn, s, e, sc) {
@@ -3088,7 +3785,7 @@ async function expSpriteSheet(fn, s, e, sc) {
   sctx.imageSmoothingEnabled = true;
   sctx.imageSmoothingQuality = 'high';
 
-      const meta = { frames: {}, meta: { app: 'Dolphin Animate', version: '1.7.9', image: `${fn}.png`, size: { w: finalSheetW, h: finalSheetH } } };
+      const meta = { frames: {}, meta: { app: 'Dolphin Animate', version: '1.9.2', image: `${fn}.png`, size: { w: finalSheetW, h: finalSheetH } } };
 
   for (let i = s; i < e; i++) {
     const fc = document.createElement('canvas');
@@ -3128,7 +3825,33 @@ $('new-project').onclick = newProj;
 
 function serialize() {
   const d = {
-    w: S.w, h: S.h, fps: S.fps, v: 7, bgColor: S.bgColor, bgImgData: S.bgImgData,
+    w: S.w, h: S.h, fps: S.fps, v: 8, bgColor: S.bgColor, bgImgData: S.bgImgData,
+    bgAudioData: Globals.bgAudioData,
+    symbols: (() => {
+      const syms = {};
+      for (const id in Symbols) {
+        const sym = Symbols[id];
+        const serializeChildren = (children) => (children || []).map(obj => {
+          const oc = {};
+          for (const k of Object.keys(obj)) {
+            if (k === 'pts') oc.pts = obj.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) }));
+            else if (k === 'fc') oc.fcData = obj.fc.toDataURL();
+            else if (k === 'children') oc.children = serializeChildren(obj.children);
+            else oc[k] = obj[k];
+          }
+          return oc;
+        });
+        syms[id] = {
+          id: sym.id, name: sym.name, regPoint: sym.regPoint,
+          children: serializeChildren(sym.children),
+          frames: sym.frames ? sym.frames.map(f => ({
+            children: serializeChildren(f.children),
+            key: f.key,
+          })) : undefined,
+        };
+      }
+      return syms;
+    })(),
     layers: S.layers.map(l => ({ id: l.id, name: l.name, vis: l.vis, lock: l.lock, col: l.col })),
     frames: S.frames.map(f => {
       const o = {};
@@ -3165,6 +3888,44 @@ async function openProj() {
     const d = JSON.parse(json);
     S.w = d.w || 800; S.h = d.h || 600; S.fps = d.fps || 12; S.bgColor = d.bgColor || '#ffffff';
     if (d.bgImgData) { const img = new Image(); img.onload = () => { S.bgImg = img; dirtyCache(); render(); }; img.src = d.bgImgData; S.bgImgData = d.bgImgData; if ($('pan-bgimg-row')) $('pan-bgimg-row').style.display = 'flex'; }
+    if (d.bgAudioData) { Globals.bgAudioData = d.bgAudioData; renderAudioTimeline(); }
+    else { Globals.bgAudioData = null; renderAudioTimeline(); }
+    
+    // Load Symbols
+    for (const key in Symbols) delete Symbols[key];
+    if (d.symbols) {
+      const deserializeChildren = (children, promises) => (children || []).map(obj => {
+        const oc = {};
+        for (const k of Object.keys(obj)) {
+          if (k === 'fcData') {
+            const img = new Image();
+            img.src = obj.fcData;
+            const c = document.createElement('canvas'); c.width = S.w; c.height = S.h;
+            promises.push(new Promise(resolve => { img.onload = () => { c.getContext('2d').drawImage(img, 0, 0); resolve(); }; img.onerror = resolve; }));
+            oc.fc = c;
+          } else if (k === 'children') {
+            oc.children = deserializeChildren(obj.children, promises);
+          } else {
+            oc[k] = obj[k];
+          }
+        }
+        return oc;
+      });
+      const symLoadPromises = [];
+      for (const key in d.symbols) {
+        const symData = d.symbols[key];
+        Symbols[key] = {
+          id: symData.id, name: symData.name, regPoint: symData.regPoint,
+          children: deserializeChildren(symData.children, symLoadPromises),
+          frames: symData.frames ? symData.frames.map(f => ({
+            children: deserializeChildren(f.children, symLoadPromises),
+            key: f.key,
+          })) : undefined,
+        };
+      }
+      Promise.all(symLoadPromises).then(() => { refreshLibrary(); dirtyCache(); render(); });
+    }
+    refreshLibrary();
     const loadPromises = [];
     // Layers (just metadata, frames are in d.frames)
     S.layers = d.layers.map(l => ({ id: l.id, name: l.name, vis: l.vis, lock: l.lock, col: l.col }));
@@ -3358,6 +4119,33 @@ function delSel() {
   octx.clearRect(0, 0, overlay.width, overlay.height);
 }
 
+function drawFillPathObj(ctx, o, baseAlpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = (o.opacity !== undefined ? o.opacity : 1) * baseAlpha;
+  ctx.fillStyle = o.color;
+  if (o.pathData) {
+    ctx.fill(new Path2D(o.pathData), o.rule || 'evenodd');
+  } else if (o.pts && o.pts.length > 2) {
+    ctx.beginPath();
+    ctx.moveTo(o.pts[0].x, o.pts[0].y);
+    for (let i = 1; i < o.pts.length; i++) ctx.lineTo(o.pts[i].x, o.pts[i].y);
+    ctx.closePath();
+    if (o.holes) {
+      for (const hole of o.holes) {
+        if (!hole || hole.length < 3) continue;
+        ctx.moveTo(hole[0].x, hole[0].y);
+        for (let i = 1; i < hole.length; i++) ctx.lineTo(hole[i].x, hole[i].y);
+        ctx.closePath();
+      }
+    }
+    ctx.fill(o.rule || 'evenodd');
+    ctx.lineWidth = 1.0;
+    ctx.strokeStyle = o.color;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 let _clipboard = null;
 let _frameClipboard = null; // copies entire frame content across layers
 function copySel() {
@@ -3390,8 +4178,11 @@ function pasteFrameContent() {
 function cutSel() {
   copySel(); delSel();
 }
-function groupSelected() {
-  if (S.selObjs.length < 2) return;
+function groupSelected(silent = false) {
+  if (S.selObjs.length < 2) {
+    if (!silent) alert('At least 2 objects must be selected to group them.');
+    return;
+  }
   saveSnapshot();
   const layerId = S.selObjs[0].layerId;
   const children = [];
@@ -3401,7 +4192,7 @@ function groupSelected() {
   }
   delSel();
   const objs = obs(S.frameIdx, layerId);
-  objs.push({ type: 'group', children, opacity: 1 });
+  objs.push({ uid: Math.random().toString(36).substr(2, 9), type: 'group', children, opacity: 1 });
   setSel({ layerId, idx: objs.length - 1 });
   dirtyCache(); fullRender(); drawSelection(); saveSnapshot();
 }
@@ -3495,6 +4286,8 @@ if (tlRuler) {
 
 // ==================== EVENTS ====================
 function setupEvents() {
+  initAudioUI(updateTL);
+  initAudioUI(updateTL);
   canvas.addEventListener('pointerdown', startDraw);
   canvas.addEventListener('pointerup', endDraw);
   // Handle pointercancel (pen lift, system interrupt) to release capture
@@ -3561,9 +4354,39 @@ function setupEvents() {
   });
   document.addEventListener('mousemove', e => { if (S.panning) { S.panX = e.clientX - S.pSX; S.panY = e.clientY - S.pSY; applyZoom(); } });
   document.addEventListener('mouseup', e => { if (e.button === 1 && S.panning) { S.panning = false; canvas.style.cursor = 'crosshair'; } });
+  canvas.addEventListener('dblclick', e => {
+    if (S.tool === 'select') {
+      const p = m2b(e);
+      const hit = hitTest(p);
+      if (hit) {
+        const o = obs(S.frameIdx, hit.layerId)[hit.idx];
+        if (o && o.type === 'symbol') {
+          enterIsolationMode(o.symbolId, { layerId: hit.layerId, idx: hit.idx });
+          return;
+        }
+      }
+      // Double-click on empty area exits isolation mode (Adobe Animate behavior)
+      if (IsolationMode && !hit) {
+        exitIsolationMode();
+      }
+    }
+  });
   // Double-click on stroke path to insert a point
   $('canvas-area').addEventListener('wheel', e => {
     e.preventDefault();
+    if (S.tool === 'camera') {
+      const f = S.frames[S.frameIdx];
+      if (f && f.cam) {
+         if (e.shiftKey) { 
+            f.cam.rotation += e.deltaY > 0 ? 5 : -5;
+         } else { 
+            f.cam.zoom = Math.max(0.1, f.cam.zoom - e.deltaY * 0.001);
+         }
+         S.tlDirty = true;
+         fullRender();
+      }
+      return;
+    }
     if (e.ctrlKey) {
       const cr = $('canvas-container').getBoundingClientRect();
       zoomAtMouse(-e.deltaY / 100, e.clientX - cr.left, e.clientY - cr.top);
@@ -3598,6 +4421,10 @@ function setupEvents() {
       document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       S.tool = btn.dataset.tool;
+      const cv = document.getElementById('draw-canvas');
+      if (cv) cv.style.cursor = 'default';
+      S.rotateReadyCorner = null;
+      S.rotateReadyMouse = null;
     };
   });
   document.querySelectorAll('.tool-btn').forEach(btn => {
@@ -3915,6 +4742,34 @@ function setupEvents() {
   if ($('obj-stroke-size')) $('obj-stroke-size').oninput = e => { const o = selObj(); if (!o) return; saveSnapshot(); const v = parseInt(e.target.value); for (const ref of S.selObjs) { const obj = obs(S.frameIdx, ref.layerId)[ref.idx]; if (obj) obj.size = v; } dirtyCache(); render(); updateObjPanel(); };
 
 
+  if ($('lib-convert-btn')) $('lib-convert-btn').onclick = convertToSymbol;
+
+  // Drop symbol onto canvas
+  canvas.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  canvas.addEventListener('drop', e => {
+    e.preventDefault();
+    try {
+      const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+      if (data.type === 'symbol_drag') {
+        const pt = m2b(e);
+        const l = L();
+        if (!l) return;
+        saveSnapshot();
+        const inst = {
+          type: 'symbol',
+          symbolId: data.symbolId,
+          x: pt.x,
+          y: pt.y,
+          sx: 1, sy: 1, rot: 0
+        };
+        obs(S.frameIdx, l.id).push(inst);
+        S.selObjs = [{ layerId: l.id, idx: obs(S.frameIdx, l.id).length - 1 }];
+        refreshLibrary();
+        dirtyCache(); fullRender(); drawSelection();
+      }
+    } catch(err) {}
+  });
+
   document.addEventListener('keydown', e => {
     // Space: play/pause, but never when typing in text/number inputs
     if (e.key === ' ') {
@@ -3939,13 +4794,38 @@ function setupEvents() {
         return;
       }
       if (k === 'x') { e.preventDefault(); cutSel(); return; }
+      if (k === 'd') {
+        e.preventDefault();
+        if (S.selObjs.length) {
+          const newRefs = [];
+          for (const ref of S.selObjs) {
+            const obj = obs(S.frameIdx, ref.layerId)[ref.idx];
+            const c = cloneObj(obj);
+            if (c.pts) c.pts = c.pts.map(p => ({ x: p.x + 10, y: p.y + 10, ...(p.p !== undefined ? { p: p.p } : {}) }));
+            if (c.x1 != null) { c.x1 += 10; c.y1 += 10; c.x2 += 10; c.y2 += 10; }
+            if (c.type === 'text') { c.x += 10; c.y += 10; }
+            if (c.type === 'group' && c.children) {
+              for (const ch of c.children) {
+                if (ch.pts) ch.pts = ch.pts.map(p => ({ x: p.x + 10, y: p.y + 10, ...(p.p !== undefined ? { p: p.p } : {}) }));
+                if (ch.x1 != null) { ch.x1 += 10; ch.y1 += 10; ch.x2 += 10; ch.y2 += 10; }
+                if (ch.type === 'text') { ch.x += 10; ch.y += 10; }
+              }
+            }
+            const objs = obs(S.frameIdx, ref.layerId);
+            objs.push(c);
+            newRefs.push({ layerId: ref.layerId, idx: objs.length - 1 });
+          }
+          S.selObjs = newRefs;
+          dirtyCache(); fullRender(); drawSelection(); saveSnapshot();
+        }
+        return;
+      }
       if (k === 't') { e.preventDefault(); tweenAll(); return; }
       if (k === 'v') {
         e.preventDefault();
         if (_clipboard) {
           const l = L();
           if (l) {
-            saveSnapshot();
             const objs = obs(S.frameIdx, l.id);
             const items = Array.isArray(_clipboard) ? _clipboard : [_clipboard];
             const newRefs = [];
@@ -3965,6 +4845,7 @@ function setupEvents() {
         }
         return;
       }
+      if (k === 'F8') { e.preventDefault(); convertToSymbol(); return; }
       if (k === 'g' && !e.shiftKey) { e.preventDefault(); groupSelected(); return; }
       if (k === 'g' && e.shiftKey) { e.preventDefault(); ungroupSelected(); return; }
       if (k === 'i') { e.preventDefault(); importImage(); return; }
@@ -4014,6 +4895,343 @@ function setupEvents() {
   });
 }
 
+export function renderSymbolThumb(symId: string, size = 60): HTMLCanvasElement {
+  const sym = Symbols[symId];
+  const tc = document.createElement('canvas');
+  tc.width = size; tc.height = size;
+  const tctx = tc.getContext('2d');
+  if (!sym || !sym.children || !sym.children.length) return tc;
+
+  // Calculate bounding box of all children
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const c of sym.children) {
+    const bb = getObjBounds(c);
+    if (bb.w === 0 && bb.h === 0) continue;
+    minX = Math.min(minX, bb.x); minY = Math.min(minY, bb.y);
+    maxX = Math.max(maxX, bb.x + bb.w); maxY = Math.max(maxY, bb.y + bb.h);
+  }
+  if (minX === Infinity) return tc;
+
+  const cw = maxX - minX || 1;
+  const ch = maxY - minY || 1;
+  const padding = 4;
+  const availW = size - padding * 2;
+  const availH = size - padding * 2;
+  const scale = Math.min(availW / cw, availH / ch, 2);
+  const offX = padding + (availW - cw * scale) / 2 - minX * scale;
+  const offY = padding + (availH - ch * scale) / 2 - minY * scale;
+
+  tctx.fillStyle = '#1a1a2e';
+  tctx.fillRect(0, 0, size, size);
+  tctx.save();
+  tctx.translate(offX, offY);
+  tctx.scale(scale, scale);
+
+  // Draw fills first
+  for (const child of sym.children) {
+    if (child.type === 'fill' && child.fc) {
+      tctx.save();
+      tctx.translate(child.x || 0, child.y || 0);
+      tctx.globalAlpha = child.opacity || 1;
+      tctx.imageSmoothingEnabled = false;
+      tctx.drawImage(child.fc, 0, 0);
+      tctx.restore();
+    } else if (child.type === 'fillPath') {
+      drawFillPathObj(tctx, child, 1);
+    }
+  }
+  // Draw strokes, shapes, text
+  for (const child of sym.children) {
+    if (child.type === 'stroke') {
+      const subs = child.subs && child.subs.length ? child.subs : (child.pts ? [{ pts: child.pts, size: child.size, color: child.color, opacity: child.opacity }] : []);
+      for (const sub of subs) {
+        drawStroke(tctx, sub.pts, sub.color || child.color, sub.size !== undefined ? sub.size : child.size, (sub.opacity !== undefined ? sub.opacity : child.opacity) || 1, 'source-over');
+      }
+    } else if (child.type === 'text') {
+      tctx.save();
+      tctx.font = `${child.bold ? 'bold ' : ''}${child.italic ? 'italic ' : ''}${child.size}px "${child.font}"`;
+      tctx.fillStyle = child.color;
+      tctx.globalAlpha = child.opacity || 1;
+      tctx.textBaseline = 'top';
+      const lines = (child.text || '').split('\n');
+      for (let i = 0; i < lines.length; i++) tctx.fillText(lines[i], child.x, child.y + i * (child.size * 1.2));
+      tctx.restore();
+    } else if (child.type === 'rect' || child.type === 'circle' || child.type === 'line') {
+      drawShape(tctx, child.type, child.x1, child.y1, child.x2, child.y2, child.color, child.fillColor, child.size, child.opacity || 1);
+    } else if (child.type === 'group' && child.children) {
+      // Simple recursive draw for groups
+      const drawGroupThumb = (children) => {
+        for (const gc of children) {
+          if (gc.type === 'stroke') {
+            const subs = gc.subs && gc.subs.length ? gc.subs : (gc.pts ? [{ pts: gc.pts, size: gc.size, color: gc.color, opacity: gc.opacity }] : []);
+            for (const sub of subs) drawStroke(tctx, sub.pts, sub.color || gc.color, sub.size !== undefined ? sub.size : gc.size, (sub.opacity !== undefined ? sub.opacity : gc.opacity) || 1, 'source-over');
+          } else if (gc.type === 'fill' && gc.fc) {
+            tctx.save(); tctx.translate(gc.x || 0, gc.y || 0); tctx.drawImage(gc.fc, 0, 0); tctx.restore();
+          } else if (gc.type !== 'fill' && gc.type !== 'fillPath' && gc.x1 != null) {
+            drawShape(tctx, gc.type, gc.x1, gc.y1, gc.x2, gc.y2, gc.color, gc.fillColor, gc.size, gc.opacity || 1);
+          } else if (gc.type === 'group' && gc.children) {
+            drawGroupThumb(gc.children);
+          }
+        }
+      };
+      drawGroupThumb(child.children);
+    }
+  }
+  tctx.restore();
+
+  // Border
+  tctx.strokeStyle = '#333';
+  tctx.lineWidth = 1;
+  tctx.strokeRect(0.5, 0.5, size - 1, size - 1);
+
+  return tc;
+}
+
+function countSymbolUsages(symId: string): number {
+  let count = 0;
+  for (const f of S.frames) {
+    for (const lid in f.o) {
+      for (const o of f.o[lid]) {
+        if (o.type === 'symbol' && o.symbolId === symId) count++;
+      }
+    }
+  }
+  return count;
+}
+
+export function refreshLibrary() {
+  const list = $('lib-item-list');
+  if (!list) return;
+  list.innerHTML = '';
+  for (const id in Symbols) {
+    const sym = Symbols[id];
+    const item = document.createElement('div');
+    item.className = 'lib-item';
+
+    // Thumbnail
+    const thumbWrap = document.createElement('div');
+    thumbWrap.className = 'lib-item-thumb';
+    const thumbCanvas = renderSymbolThumb(id, 50);
+    thumbCanvas.style.cssText = 'width:100%;height:100%;border-radius:3px;';
+    thumbWrap.appendChild(thumbCanvas);
+
+    // Info
+    const info = document.createElement('div');
+    info.className = 'lib-item-info';
+    const nameEl = document.createElement('div');
+    nameEl.className = 'lib-item-name';
+    nameEl.innerHTML = `<span style="margin-right: 5px; vertical-align: middle; width: 14px; height: 14px; display: inline-block;">${icons.symbol}</span><span class="lib-name-text">${sym.name}</span>`;
+    const usageEl = document.createElement('div');
+    usageEl.className = 'lib-item-usage';
+    const uses = countSymbolUsages(id);
+    usageEl.innerText = `${uses} uses`;
+    usageEl.style.cssText = 'font-size:10px;color:#888;';
+    info.appendChild(nameEl);
+    info.appendChild(usageEl);
+
+    item.appendChild(thumbWrap);
+    item.appendChild(info);
+
+    // Double click to enter isolation
+    item.ondblclick = () => { enterIsolationMode(id); };
+
+    // Drag to stage
+    item.draggable = true;
+    item.ondragstart = (e) => {
+      e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'symbol_drag', symbolId: id }));
+    };
+
+    // Context menu for delete/rename
+    item.oncontextmenu = (e) => {
+      e.preventDefault();
+      showContextMenu([
+        { label: 'Rename', action: () => {
+          const newName = item.querySelector('.lib-name-text');
+          if (newName) {
+            newName.contentEditable = 'true';
+            newName.focus();
+            const range = document.createRange();
+            range.selectNodeContents(newName);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+            newName.onblur = () => { sym.name = newName.innerText.trim() || sym.name; newName.contentEditable = 'false'; refreshLibrary(); dirtyCache(); fullRender(); };
+            newName.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); newName.blur(); } };
+          }
+        }},
+        { label: 'Delete', action: () => {
+          delete Symbols[id];
+          refreshLibrary();
+          dirtyCache(); fullRender();
+        }},
+      ], e.clientX, e.clientY);
+    };
+
+    list.appendChild(item);
+  }
+}
+
+export function convertToSymbol() {
+  if (S.selObjs.length < 1) return;
+  saveSnapshot();
+  
+  // Custom prompt since Electron doesn't support native prompt()
+  const defaultName = `Symbol ${Object.keys(Symbols).length + 1}`;
+  
+  const promptOverlay = document.createElement('div');
+  promptOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  
+  const promptBox = document.createElement('div');
+  promptBox.style.cssText = 'background:#2c2c2c;padding:20px;border-radius:8px;border:1px solid #444;display:flex;flex-direction:column;gap:12px;min-width:320px;box-shadow:0 4px 15px rgba(0,0,0,0.3);';
+  
+  const title = document.createElement('div');
+  title.innerText = 'Convert to Symbol';
+  title.style.cssText = 'color:#fff;font-weight:bold;font-size:14px;';
+  
+  // Name row
+  const nameLabel = document.createElement('div');
+  nameLabel.innerText = 'Name:';
+  nameLabel.style.cssText = 'color:#aaa;font-size:11px;';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = defaultName;
+  input.style.cssText = 'background:#1a1a1a;color:#fff;border:1px solid #444;padding:8px;border-radius:4px;outline:none;width:100%;box-sizing:border-box;';
+  
+  // Type row
+  const typeRow = document.createElement('div');
+  typeRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  const typeLabel = document.createElement('div');
+  typeLabel.innerText = 'Type:';
+  typeLabel.style.cssText = 'color:#aaa;font-size:11px;';
+  const typeVal = document.createElement('div');
+  typeVal.innerHTML = `<span style="margin-right: 4px; vertical-align: middle; width: 14px; height: 14px; display: inline-block;">${icons.symbol}</span> Graphic`;
+  typeVal.style.cssText = 'color:#1aaeb0;font-size:12px;font-weight:bold;display:flex;align-items:center;';
+  typeRow.appendChild(typeLabel);
+  typeRow.appendChild(typeVal);
+  
+  // Registration point grid (3x3)
+  let regPoint = 'center'; // default
+  const regLabel = document.createElement('div');
+  regLabel.innerText = 'Registration:';
+  regLabel.style.cssText = 'color:#aaa;font-size:11px;';
+  const regGrid = document.createElement('div');
+  regGrid.style.cssText = 'display:grid;grid-template-columns:repeat(3,18px);grid-template-rows:repeat(3,18px);gap:2px;width:fit-content;';
+  const positions = ['tl','tc','tr','ml','center','mr','bl','bc','br'];
+  for (const pos of positions) {
+    const cell = document.createElement('div');
+    cell.style.cssText = `width:18px;height:18px;border:1px solid #555;border-radius:2px;cursor:pointer;display:flex;align-items:center;justify-content:center;background:${pos === 'center' ? '#1aaeb0' : '#1a1a1a'};transition:background 0.1s;`;
+    cell.innerHTML = `<div style="width:6px;height:6px;border-radius:50%;background:${pos === 'center' ? '#000' : '#555'};"></div>`;
+    cell.onclick = () => {
+      regPoint = pos;
+      regGrid.querySelectorAll('div').forEach((d: any) => {
+        if (d.parentElement === regGrid) {
+          d.style.background = '#1a1a1a';
+          d.querySelector('div').style.background = '#555';
+        }
+      });
+      cell.style.background = '#1aaeb0';
+      cell.querySelector('div').style.background = '#000';
+    };
+    regGrid.appendChild(cell);
+  }
+  
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;justify-content:flex-end;gap:10px;margin-top:6px;';
+  
+  const cancelBtn = document.createElement('button');
+  cancelBtn.innerText = 'Cancel';
+  cancelBtn.style.cssText = 'background:#444;color:#fff;border:none;padding:6px 15px;border-radius:4px;cursor:pointer;';
+  
+  const okBtn = document.createElement('button');
+  okBtn.innerText = 'OK';
+  okBtn.style.cssText = 'background:#1aaeb0;color:#000;border:none;padding:6px 15px;border-radius:4px;cursor:pointer;font-weight:bold;';
+  
+  btnRow.appendChild(cancelBtn);
+  btnRow.appendChild(okBtn);
+  promptBox.appendChild(title);
+  promptBox.appendChild(nameLabel);
+  promptBox.appendChild(input);
+  promptBox.appendChild(typeRow);
+  promptBox.appendChild(regLabel);
+  promptBox.appendChild(regGrid);
+  promptBox.appendChild(btnRow);
+  promptOverlay.appendChild(promptBox);
+  document.body.appendChild(promptOverlay);
+  
+  input.focus();
+  input.select();
+  
+  const closePrompt = () => { document.body.removeChild(promptOverlay); };
+  
+  const confirmPrompt = () => {
+    const name = input.value.trim() || defaultName;
+    closePrompt();
+    finishConvertToSymbol(name, regPoint);
+  };
+  
+  cancelBtn.onclick = closePrompt;
+  okBtn.onclick = confirmPrompt;
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') confirmPrompt();
+    if (e.key === 'Escape') closePrompt();
+  };
+}
+
+function finishConvertToSymbol(name: string, regPoint: string = 'center') {
+  const symId = 'sym_' + Date.now();
+  
+  const layerMap = new Map();
+  let firstLayerId = null;
+  let minLayerIdx = Infinity;
+  for (const ref of S.selObjs) {
+    if (!layerMap.has(ref.layerId)) layerMap.set(ref.layerId, []);
+    layerMap.get(ref.layerId).push(ref.idx);
+    const lIdx = S.layers.findIndex(l => l.id === ref.layerId);
+    if (lIdx < minLayerIdx) { minLayerIdx = lIdx; firstLayerId = ref.layerId; }
+  }
+
+  const children = [];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [lId, indices] of layerMap.entries()) {
+    const sorted = [...indices].sort((a, b) => b - a);
+    const objs = obs(S.frameIdx, lId);
+    for (const i of sorted) {
+      const o = objs[i];
+      children.unshift(cloneObj(o));
+      const b = getObjBounds(o);
+      minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.w); maxY = Math.max(maxY, b.y + b.h);
+      objs.splice(i, 1);
+    }
+  }
+
+  // Calculate registration point based on selected position
+  const bw = maxX - minX, bh = maxY - minY;
+  let rx = minX + bw / 2, ry = minY + bh / 2; // default center
+  if (regPoint.includes('l')) rx = minX;
+  else if (regPoint.includes('r')) rx = maxX;
+  if (regPoint.startsWith('t')) ry = minY;
+  else if (regPoint.startsWith('b')) ry = maxY;
+
+  for (const ch of children) {
+    moveObjBy(ch, -rx, -ry);
+  }
+
+  Symbols[symId] = { id: symId, name: name, children: children, regPoint };
+
+  const symInst = {
+    type: 'symbol',
+    symbolId: symId,
+    x: rx,
+    y: ry,
+    sx: 1, sy: 1, rot: 0
+  };
+
+  obs(S.frameIdx, firstLayerId).push(symInst);
+  S.selObjs = [{ layerId: firstLayerId, idx: obs(S.frameIdx, firstLayerId).length - 1 }];
+  refreshLibrary();
+  dirtyCache(); fullRender(); drawSelection();
+}
+
 function updateObjPanel() {
   const ref = selObj();
   const objPanel = $('pan-object');
@@ -4037,7 +5255,7 @@ function updateObjPanel() {
   }
   if (!o) return;
   // Type label in Drawing Object header
-  const typeLabels = { stroke: 'Stroke', line: 'Line', rect: 'Rectangle', circle: 'Oval', fill: 'Fill', text: 'Text', group: 'Group', guide: 'Motion Guide' };
+  const typeLabels = { stroke: 'Stroke', line: 'Line', rect: 'Rectangle', circle: 'Oval', fill: 'Fill', fillPath: 'Fill', text: 'Text', group: 'Group', guide: 'Motion Guide' };
   const typeSpan = objPanel.querySelector('.pan-section-header .pan-obj-icon + span');
   if (typeSpan) typeSpan.textContent = typeLabels[o.type] || o.type;
   // Fill / Stroke colors
@@ -4112,6 +5330,7 @@ function switchTool(t) {
   const el = document.querySelector(`.tool-btn[data-tool="${t}"]`);
   if (el) el.classList.add('active');
   updateToolProps();
+  renderOverlay();
 }
 
 // ==================== RESIZE ====================
@@ -4164,5 +5383,5 @@ function init() {
   // Auto-save every 30 seconds
   setInterval(autoSave, 30000);
 }
-init();
+try { init(); } catch (e) { console.error('Init error:', e); alert('Init error: ' + e.message + '\n' + e.stack); }
 hr();

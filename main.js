@@ -1,7 +1,12 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { autoUpdater } = require('electron-updater');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegStatic = require('ffmpeg-static');
+ffmpeg.setFfmpegPath(ffmpegStatic.replace('app.asar', 'app.asar.unpacked')); // handle packaged paths
+
 
 // Fix Windows cache permission issues
 app.setPath('userData', path.join(app.getPath('appData'), 'Dolphin-Animate'));
@@ -31,11 +36,13 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
+      devTools: false
     },
     backgroundColor: '#2d2d2d',
   });
 
-  mainWindow.loadFile('index.html');
+  mainWindow.loadFile('dist/index.html');
+  // mainWindow.webContents.openDevTools();
   mainWindow.setMenuBarVisibility(false);
   Menu.setApplicationMenu(null);
 }
@@ -108,6 +115,52 @@ ipcMain.handle('export-png-sequence', async (event, { frames, dirPath, fileName 
       fs.writeFileSync(filePath, base64Data, 'base64');
     }
     return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('export-mp4', async (event, { frames, fps, filePath, audioBase64 }) => {
+  try {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dolphin-'));
+    for (let i = 0; i < frames.length; i++) {
+      const base64Data = frames[i].replace(/^data:image\/png;base64,/, '');
+      const framePath = path.join(tempDir, `frame_${String(i).padStart(4, '0')}.png`);
+      fs.writeFileSync(framePath, base64Data, 'base64');
+    }
+    
+    let audioPath = null;
+    if (audioBase64) {
+      audioPath = path.join(tempDir, 'audio.wav');
+      const audioData = audioBase64.replace(/^data:audio\/wav;base64,/, '');
+      fs.writeFileSync(audioPath, audioData, 'base64');
+    }
+
+    return new Promise((resolve) => {
+      let command = ffmpeg()
+        .input(path.join(tempDir, 'frame_%04d.png'))
+        .inputFPS(fps);
+        
+      if (audioPath) {
+        command = command.input(audioPath);
+      }
+
+      command
+        .output(filePath)
+        .videoCodec('libx264')
+        .outputOptions([
+          '-pix_fmt yuv420p'
+        ])
+        .on('end', () => {
+          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch(e){}
+          resolve({ success: true });
+        })
+        .on('error', (err) => {
+          try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch(e){}
+          resolve({ success: false, error: err.message });
+        })
+        .run();
+    });
   } catch (err) {
     return { success: false, error: err.message };
   }

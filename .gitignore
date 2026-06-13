@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist2/
+dist_clean/
+dist_installer/
+dist_new/
+dist_rotate/
+build_out/
+*.txt
+test.bat

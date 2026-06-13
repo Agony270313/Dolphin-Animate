@@ -1337,3 +1337,112 @@ body {
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+.tool-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  display: block;
+}
+
+#top-bar button svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  display: block;
+}
+
+#top-bar button {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  padding: 4px;
+}
+#top-bar button:hover {
+  background: #333;
+}
+
+#isolation-breadcrumb {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(45, 45, 45, 0.9);
+  padding: 5px 15px;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 13px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+}
+#isolation-breadcrumb .iso-path { color: #888; }
+#isolation-breadcrumb .iso-sep { color: #555; }
+#isolation-breadcrumb #iso-sym-name { color: #1aaeb0; font-weight: bold; }
+#iso-exit-btn {
+  background: #3a3a3a;
+  border: 1px solid #555;
+  color: #eee;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-left: 10px;
+}
+#iso-exit-btn:hover { background: #4a4a4a; }
+
+.lib-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 5px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.lib-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #2a2a2a;
+  padding: 6px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 2px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.lib-item:hover {
+  background: #363636;
+  border-color: #1aaeb0;
+}
+.lib-item-thumb {
+  width: 50px;
+  height: 50px;
+  min-width: 50px;
+  background: #1a1a2e;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.lib-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lib-item-name {
+  color: #eee;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lib-item-usage {
+  font-size: 10px;
+  color: #888;
+}
