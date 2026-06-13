@@ -2,7 +2,7 @@ export const S: any = {
   w: 800, h: 600,
   tool: 'brush',
   stroke: '#000000', fill: '#444444',
-  size: 4, opacity: 1,
+  size: 4, opacity: 1, smoothing: 0.5,
   layers: [], layerIdx: 0, nextLayerId: 1,
   frames: [], frameIdx: 0,
   fps: 12, loop: true, playing: false, onion: false, onionOpacity: 0.2, onionFrames: 1,
@@ -22,7 +22,7 @@ export const S: any = {
   autoSmooth: false, pixelSnap: false,
 };
 
-export const Globals = { bgAudio: null as any, bgAudioOffset: 0, bgAudioData: null as any, _penPath: null as any };
+export const Globals = { bgAudio: null as any, bgAudioOffset: 0, bgAudioStartTrim: 0, bgAudioEndTrim: 0, bgAudioData: null as any, _penPath: null as any };
 export const Symbols = {} as Record<string, any>;
 export let IsolationMode: string | null = null;
 export function setIsolationMode(id: string | null) { IsolationMode = id; }
