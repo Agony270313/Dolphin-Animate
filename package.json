@@ -1,6 +1,6 @@
 {
   "name": "dolphin-animate",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "An open-source frame-by-frame animation tool",
   "main": "main.js",
   "scripts": {
@@ -19,9 +19,7 @@
     "icon": "icon.ico",
     "files": [
       "main.js",
-      "renderer.js",
-      "index.html",
-      "styles.css",
+      "dist/**/*",
       "package.json",
       "icon.ico",
       "!node_modules/**/ffmpeg.dll"
