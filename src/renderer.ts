@@ -3097,7 +3097,7 @@ function updateTL() {
   const curL = L();
 
   // --- Update toolbar displays ---
-  $('tl-fps-display').textContent = S.fps.toFixed(2) + ' FPS';
+  if ($('tl-fps-inline')) $('tl-fps-inline').value = S.fps;
   $('tl-frame-num').innerHTML = (S.frameIdx + 1) + ' <sup>F</sup>';
 
   // --- Left: Layer list ---
@@ -3927,24 +3927,50 @@ async function expPNG(fn, s, e, sc) {
 }
 
 async function expGIF(fn, s, e, sc, fps) {
-  const fp = await ipcRenderer.invoke('save-file', { defaultName: `${fn}.gif`, filters: [{ name: 'GIF', extensions: ['gif'] }] });
-  if (!fp) return;
-  const GIF = require('gif.js/dist/gif.js');
-  const w = Math.round(S.w * sc), h = Math.round(S.h * sc);
-  const workerScript = require('url').pathToFileURL(require('path').join(__dirname, 'node_modules/gif.js/dist/gif.worker.js')).href;
-  const gif = new GIF({ workers: 2, quality: 10, width: w, height: h, workerScript });
-  for (let i = s; i < e; i++) {
-    const ec = document.createElement('canvas');
-    ec.width = w; ec.height = h;
-    expFrame(i, ec.getContext('2d'), sc);
-    gif.addFrame(ec, { copy: true, delay: 1000 / fps });
+  try {
+    const fp = await ipcRenderer.invoke('save-file', { defaultName: `${fn}.gif`, filters: [{ name: 'GIF', extensions: ['gif'] }] });
+    if (!fp) return;
+    
+    // Show a small progress indicator on screen
+    const usEl = $('update-status');
+    if (usEl) { usEl.textContent = 'Rendering GIF...'; usEl.style.color = '#fff'; }
+
+    const GIF = require('gif.js/dist/gif.js');
+    const w = Math.round(S.w * sc), h = Math.round(S.h * sc);
+    
+    // In production (Vite dist), __dirname is /dist, so node_modules is in ../node_modules
+    let workerPath = require('path').join(__dirname, '../node_modules/gif.js/dist/gif.worker.js');
+    if (!require('fs').existsSync(workerPath)) {
+      // Dev mode fallback
+      workerPath = require('path').join(__dirname, 'node_modules/gif.js/dist/gif.worker.js');
+    }
+    const workerScript = require('url').pathToFileURL(workerPath).href;
+    
+    const gif = new GIF({ workers: 2, quality: 10, width: w, height: h, workerScript });
+    for (let i = s; i < e; i++) {
+      const ec = document.createElement('canvas');
+      ec.width = w; ec.height = h;
+      expFrame(i, ec.getContext('2d'), sc);
+      gif.addFrame(ec, { copy: true, delay: 1000 / fps });
+    }
+    
+    gif.on('finished', blob => {
+      const r = new FileReader();
+      r.onload = () => { 
+        require('fs').writeFileSync(fp, Buffer.from(r.result)); 
+        if (usEl) usEl.textContent = '';
+        alert(`GIF → ${fp}`); 
+      };
+      r.readAsArrayBuffer(blob);
+    });
+    
+    gif.render();
+  } catch (err) {
+    console.error("GIF Export error:", err);
+    alert(`Failed to export GIF: ${err.message || err}`);
+    const usEl = $('update-status');
+    if (usEl) usEl.textContent = '';
   }
-  gif.on('finished', blob => {
-    const r = new FileReader();
-    r.onload = () => { require('fs').writeFileSync(fp, Buffer.from(r.result)); alert(`GIF → ${fp}`); };
-    r.readAsArrayBuffer(blob);
-  });
-  gif.render();
 }
 
 async function expMP4(fn, s, e, sc, fps) {
@@ -4723,8 +4749,35 @@ function setupEvents() {
     btn.onclick = () => switchTool(btn.dataset.tool);
   });
   // Property controls
-  $('prop-size').oninput = e => { S.size = parseInt(e.target.value); $('brush-size').value = e.target.value; };
-  $('prop-opacity').oninput = e => { S.opacity = parseInt(e.target.value) / 100; };
+  $('prop-size').oninput = e => { 
+    const v = parseInt(e.target.value);
+    S.size = v; 
+    if ($('brush-size')) $('brush-size').value = e.target.value; 
+    if ($('brush-size-label')) $('brush-size-label').textContent = e.target.value;
+    const o = selObj();
+    if (o) {
+      saveSnapshot();
+      for (const ref of S.selObjs) {
+        const obj = obs(S.frameIdx, ref.layerId)[ref.idx];
+        if (obj) obj.size = v;
+      }
+      dirtyCache(); render(); updateObjPanel();
+    }
+  };
+  $('prop-opacity').oninput = e => { 
+    const v = parseInt(e.target.value) / 100;
+    S.opacity = v; 
+    if ($('opacity')) $('opacity').value = e.target.value;
+    const o = selObj();
+    if (o) {
+      saveSnapshot();
+      for (const ref of S.selObjs) {
+        const obj = obs(S.frameIdx, ref.layerId)[ref.idx];
+        if (obj) obj.opacity = v;
+      }
+      dirtyCache(); render(); updateObjPanel();
+    }
+  };
   $('prop-smoothness').oninput = e => { 
     S.smoothness = parseInt(e.target.value); 
     S.smoothing = parseInt(e.target.value) / 100;
@@ -4763,9 +4816,38 @@ function setupEvents() {
   // Initial sync: top bar → prop panel
   $('prop-size').value = $('brush-size').value;
   $('prop-opacity').value = $('opacity').value;
-  // Sync top bar size/opacity to prop panel
-  $('brush-size').oninput = e => { S.size = parseInt(e.target.value); $('brush-size-label').textContent = e.target.value; $('prop-size').value = e.target.value; };
-  $('opacity').oninput = e => { S.opacity = parseInt(e.target.value) / 100; $('prop-opacity').value = e.target.value; };
+  // Sync top bar size/opacity to prop panel and selected objects
+  $('brush-size').oninput = e => { 
+    const v = parseInt(e.target.value);
+    S.size = v; 
+    $('brush-size-label').textContent = e.target.value; 
+    if ($('prop-size')) $('prop-size').value = e.target.value; 
+    // Update selected objects if any
+    const o = selObj();
+    if (o) {
+      saveSnapshot();
+      for (const ref of S.selObjs) {
+        const obj = obs(S.frameIdx, ref.layerId)[ref.idx];
+        if (obj) obj.size = v;
+      }
+      dirtyCache(); render(); updateObjPanel();
+    }
+  };
+  $('opacity').oninput = e => { 
+    const v = parseInt(e.target.value) / 100;
+    S.opacity = v; 
+    if ($('prop-opacity')) $('prop-opacity').value = e.target.value; 
+    // Update selected objects if any
+    const o = selObj();
+    if (o) {
+      saveSnapshot();
+      for (const ref of S.selObjs) {
+        const obj = obs(S.frameIdx, ref.layerId)[ref.idx];
+        if (obj) obj.opacity = v;
+      }
+      dirtyCache(); render(); updateObjPanel();
+    }
+  };
 
   // Properties panel tab switching
   document.querySelectorAll('.pan-tab').forEach(tab => {
@@ -4999,6 +5081,8 @@ function setupEvents() {
   if ($('fps-input')) $('fps-input').onchange = e => {
     saveSnapshot();
     S.fps = parseInt(e.target.value) || 12;
+    if (S.fps < 1) S.fps = 1;
+    if (S.fps > 120) S.fps = 120;
     if (S.playing) { clearInterval(_pi); _pi = setInterval(() => {
       if (S.frameIdx < S.frames.length - 1) S.frameIdx++;
       else if (S.loop) S.frameIdx = 0;
@@ -5006,6 +5090,30 @@ function setupEvents() {
       updateTL(); fullRender();
     }, 1000 / S.fps); }
   };
+  
+  if ($('tl-fps-inline')) $('tl-fps-inline').onchange = e => {
+    let fps = parseInt(e.target.value);
+    if (!isNaN(fps)) {
+      if (fps < 1) fps = 1;
+      if (fps > 120) fps = 120;
+      saveSnapshot();
+      S.fps = fps;
+      if ($('fps-input')) $('fps-input').value = fps.toString();
+      
+      if (S.playing) { 
+        clearInterval(_pi); 
+        _pi = setInterval(() => {
+          if (S.frameIdx < S.frames.length - 1) S.frameIdx++;
+          else if (S.loop) S.frameIdx = 0;
+          else { play(); return; }
+          updateTL(); fullRender();
+        }, 1000 / S.fps); 
+      } else {
+        updateTL();
+      }
+    }
+  };
+  
   if ($('loop-toggle')) $('loop-toggle').onchange = e => { saveSnapshot(); S.loop = e.target.checked; };
   // Onion skin controls
   function setOnion(v) { saveSnapshot(); S.onion = v; if ($('onion-skin')) $('onion-skin').checked = v; if ($('prop-onion')) $('prop-onion').checked = v; dirtyCache(); render(); }
@@ -5068,7 +5176,12 @@ function setupEvents() {
   };
   if ($('obj-stroke-size')) $('obj-stroke-size').oninput = e => { const o = selObj(); if (!o) return; saveSnapshot(); const v = parseInt(e.target.value); for (const ref of S.selObjs) { const obj = obs(S.frameIdx, ref.layerId)[ref.idx]; if (obj) obj.size = v; } dirtyCache(); render(); updateObjPanel(); };
   
-  if ($('obj-fill-swatch')) $('obj-fill-swatch').onclick = () => { const i = $('obj-fill-input'); if (i) i.click(); };
+  if ($('obj-fill-swatch')) $('obj-fill-swatch').onclick = () => { 
+    const i = $('obj-fill-input'); 
+    if (i) {
+      try { i.showPicker(); } catch(e) { i.click(); }
+    }
+  };
   if ($('obj-fill-input')) $('obj-fill-input').oninput = e => {
     if (!selObj()) return;
     saveSnapshot();
@@ -5080,7 +5193,12 @@ function setupEvents() {
     dirtyCache(); render(); updateObjPanel();
   };
   
-  if ($('obj-stroke-swatch')) $('obj-stroke-swatch').onclick = () => { const i = $('obj-stroke-input'); if (i) i.click(); };
+  if ($('obj-stroke-swatch')) $('obj-stroke-swatch').onclick = () => { 
+    const i = $('obj-stroke-input'); 
+    if (i) {
+      try { i.showPicker(); } catch(e) { i.click(); }
+    }
+  };
   if ($('obj-stroke-input')) $('obj-stroke-input').oninput = e => {
     if (!selObj()) return;
     saveSnapshot();
@@ -5639,9 +5757,19 @@ function updateObjPanel() {
     ($('obj-stroke-opacity') as HTMLInputElement).value = op.toString();
   }
   if ($('obj-stroke-opacity-pct')) $('obj-stroke-opacity-pct').textContent = Math.round(op * 100) + '%';
+  
+  // Sync opacity with Top bar and Properties Panel
+  if ($('opacity')) $('opacity').value = Math.round(op * 100).toString();
+  if ($('prop-opacity')) $('prop-opacity').value = Math.round(op * 100).toString();
+
   // Stroke size
   const sz = o.size !== undefined ? o.size : 0;
   if ($('obj-stroke-size')) $('obj-stroke-size').value = sz;
+  
+  // Sync size with Top bar and Properties Panel
+  if ($('brush-size')) $('brush-size').value = sz.toString();
+  if ($('brush-size-label')) $('brush-size-label').textContent = sz.toString();
+  if ($('prop-size')) $('prop-size').value = sz.toString();
   // Miter
   if ($('obj-miter')) $('obj-miter').value = o.miterLimit !== undefined ? o.miterLimit : 3;
   // Hinting
@@ -5724,6 +5852,9 @@ ipcRenderer.on('update-status', (e, status) => {
   else if (status === 'available') usEl.textContent = 'Downloading update...';
   else if (status === 'up-to-date') { usEl.textContent = ''; usEl.style.color = ''; }
   else if (status === 'downloaded') { usEl.textContent = 'Restart to update'; usEl.style.color = '#4fc3f7'; }
+  else if (status === 'error') {
+    usEl.textContent = '';
+  }
 });
 ipcRenderer.on('update-progress', (e, pct) => {
   usEl.textContent = `Downloading... ${Math.round(pct)}%`;

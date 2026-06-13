@@ -924,6 +924,11 @@ input[type="range"]:focus {
   font-size: 10px;
   min-width: 55px;
   font-family: 'Consolas', 'Monaco', monospace;
+  cursor: pointer;
+  transition: color 0.1s;
+}
+#tl-fps-display:hover {
+  color: #1aaeb0;
 }
 #tl-frame-num {
   color: #ccc;

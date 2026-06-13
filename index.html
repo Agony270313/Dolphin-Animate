@@ -311,7 +311,11 @@
       </div>
       <div id="timeline-right">
         <div id="tl-frame-toolbar">
-          <span id="tl-fps-display">12.00 FPS</span>
+          <div id="tl-fps-display-container" style="display:flex; align-items:center; color:#888; font-size:10px; font-family:'Consolas','Monaco',monospace;">
+            <input type="number" id="tl-fps-inline" value="12" min="1" max="120" style="width:36px; background:transparent; color:#888; border:none; outline:none; font-family:inherit; font-size:inherit; text-align:right; -moz-appearance:textfield; padding:0; margin-right:2px;" title="Animation FPS">
+            <style>#tl-fps-inline::-webkit-outer-spin-button, #tl-fps-inline::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }</style>
+            FPS
+          </div>
           <span id="tl-frame-num">1 <sup>F</sup></span>
           <span class="tl-toolbar-sep"></span>
           <button id="tl-first-frame" title="First Frame"></button>
