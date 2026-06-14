@@ -4553,6 +4553,14 @@ canvas.addEventListener('contextmenu', e => {
       { label: 'Delete', shortcut: 'Del', action: () => { delSel(); } },
       { sep: true },
     ];
+    
+    // Z-Order Options
+    items.push({ label: 'Bring to Front', action: () => changeZOrder('front') });
+    items.push({ label: 'Bring Forward', action: () => changeZOrder('forward') });
+    items.push({ label: 'Send Backward', action: () => changeZOrder('backward') });
+    items.push({ label: 'Send to Back', action: () => changeZOrder('back') });
+    items.push({ sep: true });
+
     if (S.selObjs.length > 1) {
       items.push({ label: 'Group', shortcut: 'Ctrl+G', action: groupSelected });
     }
@@ -4590,7 +4598,6 @@ canvas.addEventListener('contextmenu', e => {
 
 function delSel() {
   if (!S.selObjs.length) return;
-  saveSnapshot();
   // Group by layerId and sort by idx descending to avoid index shifting
   const byLayer = {};
   for (const ref of S.selObjs) {
@@ -4608,6 +4615,75 @@ function delSel() {
   dirtyCache(); S.tlDirty = true;
   fullRender();
   octx.clearRect(0, 0, overlay.width, overlay.height);
+  saveSnapshot();
+}
+
+function changeZOrder(action: 'front' | 'back' | 'forward' | 'backward') {
+  if (!S.selObjs.length) return;
+  const layerGroups = {};
+  for (const ref of S.selObjs) {
+    if (!layerGroups[ref.layerId]) layerGroups[ref.layerId] = [];
+    layerGroups[ref.layerId].push(ref.idx);
+  }
+  
+  const newSel = [];
+  
+  for (const lid in layerGroups) {
+    const arr = obs(S.frameIdx, lid);
+    const indices = layerGroups[lid].sort((a,b) => a - b);
+    
+    if (action === 'front') {
+      const moved = indices.map(i => arr[i]);
+      for (let i = indices.length - 1; i >= 0; i--) arr.splice(indices[i], 1);
+      for (const m of moved) {
+        newSel.push({ layerId: lid, idx: arr.length });
+        arr.push(m);
+      }
+    } else if (action === 'back') {
+      const moved = indices.map(i => arr[i]);
+      for (let i = indices.length - 1; i >= 0; i--) arr.splice(indices[i], 1);
+      for (let i = 0; i < moved.length; i++) {
+        arr.unshift(moved[i]);
+        newSel.push({ layerId: lid, idx: i });
+      }
+    } else if (action === 'forward') {
+      for (let i = indices.length - 1; i >= 0; i--) {
+        const idx = indices[i];
+        if (idx < arr.length - 1) {
+          const temp = arr[idx];
+          arr[idx] = arr[idx + 1];
+          arr[idx + 1] = temp;
+          newSel.push({ layerId: lid, idx: idx + 1 });
+          for (let j = i - 1; j >= 0; j--) {
+            if (indices[j] === idx + 1) indices[j] = idx;
+          }
+        } else {
+          newSel.push({ layerId: lid, idx });
+        }
+      }
+    } else if (action === 'backward') {
+      for (let i = 0; i < indices.length; i++) {
+        const idx = indices[i];
+        if (idx > 0) {
+          const temp = arr[idx];
+          arr[idx] = arr[idx - 1];
+          arr[idx - 1] = temp;
+          newSel.push({ layerId: lid, idx: idx - 1 });
+          for (let j = i + 1; j < indices.length; j++) {
+             if (indices[j] === idx - 1) indices[j] = idx;
+          }
+        } else {
+          newSel.push({ layerId: lid, idx });
+        }
+      }
+    }
+  }
+  
+  S.selObjs = newSel;
+  dirtyCache();
+  fullRender();
+  drawSelection();
+  saveSnapshot();
 }
 
 function drawFillPathObj(ctx, o, baseAlpha = 1) {
@@ -4740,7 +4816,6 @@ function groupSelected(silent = false) {
     if (!silent) alert('At least 2 objects must be selected to group them.');
     return;
   }
-  saveSnapshot();
   const layerId = S.selObjs[0].layerId;
   const children = [];
   for (const ref of S.selObjs) {
@@ -4759,7 +4834,6 @@ function ungroupSelected() {
   const objs = obs(S.frameIdx, ref.layerId);
   const o = objs[ref.idx];
   if (!o || o.type !== 'group' || !o.children) return;
-  saveSnapshot();
   const children = o.children.map(c => cloneObj(c));
   objs.splice(ref.idx, 1);
   const newRefs = [];
