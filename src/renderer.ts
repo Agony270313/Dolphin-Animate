@@ -4193,7 +4193,17 @@ async function saveProj() {
   const fp = await ipcRenderer.invoke('save-file', { defaultName: 'project.yunus', filters: [{ name: 'Yunus Project', extensions: ['yunus'] }] });
   if (!fp) return;
   const r = await ipcRenderer.invoke('write-file', { filePath: fp, data: serialize() });
-  if (!r.success) alert('Save failed: ' + r.error);
+  if (!r.success) {
+    alert('Save failed: ' + r.error);
+  } else {
+    try {
+      let recents = JSON.parse(localStorage.getItem('recentProjects') || '[]');
+      recents = recents.filter((p: any) => p.path !== fp);
+      recents.unshift({ name: fp.split('\\').pop() || fp, path: fp, date: Date.now() });
+      if (recents.length > 10) recents.pop();
+      localStorage.setItem('recentProjects', JSON.stringify(recents));
+    } catch (e) {}
+  }
 }
 
 async function openProj(providedPath?: string): Promise<boolean> {

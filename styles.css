@@ -1749,3 +1749,5 @@ input[type="range"]:focus {
 }
 
 .ss-preset.active { border-color: #007acc; background-color: #252525; box-shadow: 0 0 10px rgba(0,122,204,0.3); transform: translateY(-2px); }
+
+.ss-recent-item { cursor: pointer; }
