@@ -6041,7 +6041,7 @@ function init() {
   S.tlDirty = true;
   // Auto-save: check for saved state
   const saved = checkAutoSave();
-  let bypassStartScreen = false;
+  let hasAutoSave = false;
   if (saved) {
     const s = saved;
     S.w = s.w; S.h = s.h; S.fps = s.fps; S.loop = s.loop;
@@ -6051,12 +6051,15 @@ function init() {
     if ($('canvas-bg-color')) $('canvas-bg-color').value = S.bgColor;
     if ($('fps-input')) $('fps-input').value = s.fps.toString();
     if ($('loop-toggle')) ($('loop-toggle') as HTMLInputElement).checked = s.loop;
-    bypassStartScreen = true;
+    hasAutoSave = true;
   }
   
   setupStartScreen();
-  if (bypassStartScreen && $('start-screen')) {
-    $('start-screen').style.display = 'none';
+  if (hasAutoSave && $('ss-resume-btn')) {
+    $('ss-resume-btn').style.display = 'block';
+    $('ss-resume-btn').onclick = () => {
+      $('start-screen').style.display = 'none';
+    };
   }
   
   fullRender();
@@ -6064,6 +6067,16 @@ function init() {
   saveSnapshot();
   // Auto-save every 30 seconds
   setInterval(autoSave, 30000);
+
+  // Hide loading screen
+  setTimeout(() => {
+    const loading = $('app-loading');
+    if (loading) {
+      loading.style.opacity = '0';
+      loading.style.transition = 'opacity 0.3s ease';
+      setTimeout(() => loading.remove(), 300);
+    }
+  }, 300);
 }
 try { init(); } catch (e) { console.error('Init error:', e); alert('Init error: ' + e.message + '\n' + e.stack); }
 hr();
