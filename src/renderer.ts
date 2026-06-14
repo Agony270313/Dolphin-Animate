@@ -4128,7 +4128,11 @@ async function expSpriteSheet(fn, s, e, sc) {
 // ==================== PROJECT ====================
 $('save-project').onclick = saveProj;
 $('open-project').onclick = openProj;
-$('new-project').onclick = newProj;
+$('new-project').onclick = () => {
+  if (!confirm('Are you sure you want to discard the current project?')) return;
+  const startScreen = $('start-screen');
+  if (startScreen) startScreen.style.display = 'flex';
+};
 
 function serialize() {
   const d = {
@@ -4186,11 +4190,24 @@ async function saveProj() {
   if (!r.success) alert('Save failed: ' + r.error);
 }
 
-async function openProj() {
-  const fp = await ipcRenderer.invoke('open-file', { filters: [{ name: 'Yunus Project', extensions: ['yunus'] }] });
+async function openProj(providedPath?: string) {
+  let fp = providedPath;
+  if (!fp || typeof fp !== 'string') {
+    fp = await ipcRenderer.invoke('open-file', { filters: [{ name: 'Yunus Project', extensions: ['yunus'] }] });
+  }
   if (!fp) return;
   const json = await ipcRenderer.invoke('read-file', fp);
   if (!json) { alert('Read failed'); return; }
+  
+  // Add to recent projects
+  try {
+    let recents = JSON.parse(localStorage.getItem('recentProjects') || '[]');
+    recents = recents.filter((p: any) => p.path !== fp);
+    recents.unshift({ name: fp.split('\\').pop() || fp, path: fp, date: Date.now() });
+    if (recents.length > 10) recents.pop();
+    localStorage.setItem('recentProjects', JSON.stringify(recents));
+  } catch (e) {}
+
   try {
     const d = JSON.parse(json);
     S.w = d.w || 800; S.h = d.h || 600; S.fps = d.fps || 12; S.bgColor = d.bgColor || '#ffffff';
@@ -4302,8 +4319,8 @@ async function openProj() {
   } catch (err) { alert('Parse error: ' + err.message); }
 }
 
-function newProj() {
-  if (!confirm('Are you sure you want to discard the current project?')) return;
+function newProj(skipConfirm = false) {
+  if (!skipConfirm && !confirm('Are you sure you want to discard the current project?')) return;
   S.layers = [mkLayer('Layer 1')]; S.layerIdx = 0;
   syncActiveLayer();
   S.selLayerIds.clear();
@@ -5309,6 +5326,9 @@ function setupEvents() {
     if (e.ctrlKey) {
       if (k === 'z') { e.preventDefault(); undo(); return; }
       if (k === 'y') { e.preventDefault(); redo(); return; }
+      if (k === 'n') { e.preventDefault(); $('new-project').click(); return; }
+      if (k === 'o') { e.preventDefault(); $('open-project').click(); return; }
+      if (k === 's') { e.preventDefault(); $('save-project').click(); return; }
       if (k === '0') { e.preventDefault(); centerZoom(); return; }
       if (k === '=') { e.preventDefault(); zoomAt(1); return; }
       if (k === '-') { e.preventDefault(); zoomAt(-1); return; }
@@ -5904,6 +5924,111 @@ ipcRenderer.on('update-progress', (e, pct) => {
   usEl.textContent = `Downloading... ${Math.round(pct)}%`;
 });
 
+// ==================== START SCREEN ====================
+function renderRecentProjects() {
+  const list = $('ss-recent-list');
+  if (!list) return;
+  list.innerHTML = '';
+  try {
+    const recents = JSON.parse(localStorage.getItem('recentProjects') || '[]');
+    if (recents.length === 0) {
+      list.innerHTML = '<div style="color:#888; font-size:12px; padding:10px;">No recent projects</div>';
+      return;
+    }
+    recents.forEach((p: any) => {
+      const item = document.createElement('div');
+      item.className = 'ss-recent-item';
+      item.innerHTML = `
+        <div>
+          <div class="ss-recent-name">${p.name}</div>
+          <div class="ss-recent-path">${p.path}</div>
+        </div>
+      `;
+      item.onclick = async () => {
+        const startScreen = $('start-screen');
+        if (startScreen) startScreen.style.display = 'none';
+        await openProj(p.path);
+      };
+      list.appendChild(item);
+    });
+  } catch(e) {}
+}
+
+function setupStartScreen() {
+  const startScreen = $('start-screen');
+  if (!startScreen) return;
+  
+  // Tabs
+  const navBtns = document.querySelectorAll('.ss-nav-btn');
+  const mainSec = document.querySelector('.ss-main > h1'); // "Create New" section indicator
+  
+  navBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      navBtns.forEach(b => b.classList.remove('active'));
+      const target = e.currentTarget as HTMLElement;
+      target.classList.add('active');
+      const tab = target.dataset.tab;
+      
+      const customSec = document.querySelector('.ss-custom') as HTMLElement;
+      const presetSec = document.querySelector('.ss-presets') as HTMLElement;
+      const createTitle = document.querySelector('.ss-title') as HTMLElement;
+      const recentSec = document.querySelector('.ss-recent-section') as HTMLElement;
+      
+      if (tab === 'recent') {
+        if(presetSec) presetSec.style.display = 'none';
+        if(customSec) customSec.style.display = 'none';
+        if(createTitle) createTitle.style.display = 'none';
+        if(recentSec) recentSec.style.display = 'block';
+        renderRecentProjects();
+      } else {
+        if(presetSec) presetSec.style.display = 'grid';
+        if(customSec) customSec.style.display = 'block';
+        if(createTitle) createTitle.style.display = 'block';
+        if(recentSec) recentSec.style.display = 'none';
+      }
+    });
+  });
+
+  // Open button
+  $('ss-open-btn').onclick = async () => {
+    await openProj();
+    startScreen.style.display = 'none';
+  };
+
+  // Presets
+  document.querySelectorAll('.ss-preset').forEach(el => {
+    el.addEventListener('click', (e) => {
+      const p = e.currentTarget as HTMLElement;
+      const w = parseInt(p.dataset.w || '1920');
+      const h = parseInt(p.dataset.h || '1080');
+      const fps = parseInt(p.dataset.fps || '24');
+      
+      S.w = w; S.h = h; S.fps = fps;
+      if ($('canvas-width')) $('canvas-width').value = w.toString();
+      if ($('canvas-height')) $('canvas-height').value = h.toString();
+      if ($('fps-input')) $('fps-input').value = fps.toString();
+      
+      newProj(true); // create blank without confirming
+      startScreen.style.display = 'none';
+    });
+  });
+
+  // Custom Create
+  $('ss-create-btn').onclick = () => {
+    const w = parseInt(($('ss-width') as HTMLInputElement).value) || 1920;
+    const h = parseInt(($('ss-height') as HTMLInputElement).value) || 1080;
+    const fps = parseInt(($('ss-fps') as HTMLInputElement).value) || 24;
+    
+    S.w = w; S.h = h; S.fps = fps;
+    if ($('canvas-width')) $('canvas-width').value = w.toString();
+    if ($('canvas-height')) $('canvas-height').value = h.toString();
+    if ($('fps-input')) $('fps-input').value = fps.toString();
+    
+    newProj(true);
+    startScreen.style.display = 'none';
+  };
+}
+
 // ==================== INIT ====================
 function init() {
   applyZoom();
@@ -5916,16 +6041,24 @@ function init() {
   S.tlDirty = true;
   // Auto-save: check for saved state
   const saved = checkAutoSave();
+  let bypassStartScreen = false;
   if (saved) {
     const s = saved;
     S.w = s.w; S.h = s.h; S.fps = s.fps; S.loop = s.loop;
     if (s.bgImgData) { const img = new Image(); img.onload = () => { S.bgImg = img; dirtyCache(); render(); }; img.src = s.bgImgData; S.bgImgData = s.bgImgData; if ($('pan-bgimg-row')) $('pan-bgimg-row').style.display = 'flex'; }
-    if ($('canvas-width')) $('canvas-width').value = s.w;
-    if ($('canvas-height')) $('canvas-height').value = s.h;
+    if ($('canvas-width')) $('canvas-width').value = s.w.toString();
+    if ($('canvas-height')) $('canvas-height').value = s.h.toString();
     if ($('canvas-bg-color')) $('canvas-bg-color').value = S.bgColor;
-    if ($('fps-input')) $('fps-input').value = s.fps;
-    if ($('loop-toggle')) $('loop-toggle').checked = s.loop;
+    if ($('fps-input')) $('fps-input').value = s.fps.toString();
+    if ($('loop-toggle')) ($('loop-toggle') as HTMLInputElement).checked = s.loop;
+    bypassStartScreen = true;
   }
+  
+  setupStartScreen();
+  if (bypassStartScreen && $('start-screen')) {
+    $('start-screen').style.display = 'none';
+  }
+  
   fullRender();
   setupEvents();
   saveSnapshot();

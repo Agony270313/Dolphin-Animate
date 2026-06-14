@@ -388,6 +388,77 @@
     <div class="context-menu-items"></div>
   </div>
 
+  <!-- Start Screen -->
+  <div id="start-screen" class="start-screen">
+    <div class="ss-sidebar">
+      <div class="ss-logo">
+        <img src="icon.ico" alt="Dolphin Animate Logo" class="ss-logo-img">
+        <span>Dolphin Animate</span>
+      </div>
+      <div class="ss-nav">
+        <button class="ss-nav-btn active" data-tab="home">🏠 Home</button>
+        <button class="ss-nav-btn" data-tab="recent">🕒 Recent</button>
+      </div>
+      <div class="ss-sidebar-bottom">
+        <button id="ss-open-btn" class="ss-action-btn">📂 Open Project...</button>
+      </div>
+    </div>
+    <div class="ss-main">
+      <h1 class="ss-title">Create New</h1>
+      <div class="ss-presets">
+        <div class="ss-preset" data-w="1920" data-h="1080" data-fps="24">
+          <div class="ss-preset-icon hd-icon"></div>
+          <div class="ss-preset-name">Full HD</div>
+          <div class="ss-preset-desc">1920 x 1080 • 24 FPS</div>
+        </div>
+        <div class="ss-preset" data-w="1280" data-h="720" data-fps="24">
+          <div class="ss-preset-icon sd-icon"></div>
+          <div class="ss-preset-name">HD Ready</div>
+          <div class="ss-preset-desc">1280 x 720 • 24 FPS</div>
+        </div>
+        <div class="ss-preset" data-w="1080" data-h="1080" data-fps="30">
+          <div class="ss-preset-icon social-icon"></div>
+          <div class="ss-preset-name">Social Square</div>
+          <div class="ss-preset-desc">1080 x 1080 • 30 FPS</div>
+        </div>
+        <div class="ss-preset" data-w="800" data-h="600" data-fps="12">
+          <div class="ss-preset-icon retro-icon"></div>
+          <div class="ss-preset-name">Standard</div>
+          <div class="ss-preset-desc">800 x 600 • 12 FPS</div>
+        </div>
+      </div>
+      
+      <div class="ss-custom">
+        <h2>Custom Settings</h2>
+        <div class="ss-custom-row">
+          <div class="ss-input-group">
+            <label>Width</label>
+            <input type="number" id="ss-width" value="1920" min="100" max="8192">
+          </div>
+          <div class="ss-input-group">
+            <label>Height</label>
+            <input type="number" id="ss-height" value="1080" min="100" max="8192">
+          </div>
+          <div class="ss-input-group">
+            <label>FPS</label>
+            <input type="number" id="ss-fps" value="24" min="1" max="120">
+          </div>
+          <div class="ss-input-group">
+            <label>&nbsp;</label>
+            <button id="ss-create-btn" class="ss-create-btn">Create</button>
+          </div>
+        </div>
+      </div>
+      
+      <div class="ss-recent-section" style="display: none;">
+        <h1 class="ss-title">Recent Projects</h1>
+        <div id="ss-recent-list" class="ss-recent-list">
+          <!-- Recent projects will be populated here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="/src/renderer.ts"></script>
 </body>
 </html>
