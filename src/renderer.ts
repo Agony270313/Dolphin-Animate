@@ -1812,8 +1812,51 @@ function marchingSquares(filled, w, h) {
 // ---- Fill: alpha-mask flood fill → bitmap fill ----
 function doFill(c) {
   const l = L();
-  if (!l) return;
+  if (!l || l.locked || !l.vis) return;
   const w = S.w, h = S.h;
+
+  const tpWorld = { x: c.x, y: c.y };
+  const objs = obs(S.frameIdx, l.id);
+  
+  // Vector-aware fill: Check if we clicked inside a shape/fill on the current layer
+  for (let i = objs.length - 1; i >= 0; i--) {
+    const o = objs[i];
+    const m = hasTransform(o) ? getObjMatrix(o) : null;
+    const tp = m ? inverseTransformPoint(tpWorld, m) : tpWorld;
+
+    if (o.type === 'circle') {
+      const cx = (o.x1 + o.x2) / 2, cy = (o.y1 + o.y2) / 2;
+      const rx = Math.abs(o.x2 - o.x1) / 2, ry = Math.abs(o.y2 - o.y1) / 2;
+      if (rx > 0 && ry > 0) {
+        const d = ((tp.x - cx) / rx) ** 2 + ((tp.y - cy) / ry) ** 2;
+        if (d <= 1) {
+          o.fillColor = S.stroke;
+          dirtyCache(); render(); saveSnapshot();
+          return;
+        }
+      }
+    } else if (o.type === 'rect') {
+      const x1 = Math.min(o.x1, o.x2), x2 = Math.max(o.x1, o.x2);
+      const y1 = Math.min(o.y1, o.y2), y2 = Math.max(o.y1, o.y2);
+      if (tp.x >= x1 && tp.x <= x2 && tp.y >= y1 && tp.y <= y2) {
+        o.fillColor = S.stroke;
+        dirtyCache(); render(); saveSnapshot();
+        return;
+      }
+    } else if (o.type === 'fillPath' && o.pts) {
+      let inside = pointInPolygon(tp, o.pts);
+      if (inside && o.holes) {
+        for (const hole of o.holes) {
+          if (pointInPolygon(tp, hole)) { inside = false; break; }
+        }
+      }
+      if (inside) {
+        o.color = S.stroke;
+        dirtyCache(); render(); saveSnapshot();
+        return;
+      }
+    }
+  }
 
   // 1. Render strokes/shapes to a transparent canvas (NO background)
   const wall = document.createElement('canvas');
