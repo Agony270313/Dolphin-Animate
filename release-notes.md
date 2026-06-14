@@ -1,13 +1,13 @@
-# Dolphin Animate v2.0.6 Güncellemesi! 🚀
+# Dolphin Animate v2.0.6 Update! 🚀
 
-Bu sürümle birlikte çok istenen özellikler eklendi ve iyileştirmeler yapıldı:
+With this release, highly requested features have been added and improvements have been made:
 
-✨ **Yeni Özellikler:**
-- **Özelleştirilebilir Kısayol Tuşları (Keybindings):** Artık Ayarlar (Settings) menüsünden tüm araçların ve işlemlerin kısayol tuşlarını kendi alışkanlıklarınıza göre değiştirebilirsiniz. Değişiklikleriniz otomatik olarak kaydedilir!
-- **Otomatik Kayıt (Auto-Save):** Projelerinizin kaybolmasını önlemek için Ayarlar bölümüne Otomatik Kayıt seçeneği eklendi. (Kapalı, 1, 5 veya 10 dakikada bir otomatik kayıt ayarlayabilirsiniz).
-- **Zaman Çizelgesi Temaları (Timeline Themes):** Adobe Animate tarzı yeni tema veya alışkın olduğunuz Klasik tema arasında seçim yapabilirsiniz.
+✨ **New Features:**
+- **Customizable Keybindings:** You can now change keyboard shortcuts for all tools and actions according to your preferences from the Settings menu. Your changes are saved automatically!
+- **Auto-Save:** To prevent your projects from being lost, an Auto-Save option has been added to the Settings section. (You can set it to Off, or auto-save every 1, 5, or 10 minutes).
+- **Timeline Themes:** You can now choose between the new Adobe Animate style theme or the Classic theme you are used to.
 
-🔧 **Düzeltmeler & İyileştirmeler:**
-- Klavye ve arayüz dinleme sistemi (keydown events) sıfırdan yazılarak çok daha stabil hale getirildi.
-- Başlangıç ekranı (Start Screen) arayüzü güncellendi, yeni Ayarlar menüsü eklendi.
-- Küçük sözdizimi hataları giderildi, uygulamanın arka plan performansında optimizasyonlar yapıldı.
+🔧 **Fixes & Improvements:**
+- The keyboard and UI event listener system (keydown events) has been rewritten from scratch, making it much more stable.
+- The Start Screen UI has been updated, and a new Settings menu has been added.
+- Minor syntax errors have been fixed, and optimizations have been made to the app's background performance.
