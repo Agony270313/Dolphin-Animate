@@ -1963,16 +1963,10 @@ function doFill(c) {
     color: S.stroke,
     opacity: S.opacity
   });
-  const newIdx = obs(S.frameIdx, l.id).length - 1;
-  S.selObjs.push({ layerId: l.id, idx: newIdx });
-  
-  if (S.selObjs.length > 1) {
-    groupSelected(true);
-  } else {
-    dirtyCache();
-    render();
-    saveSnapshot();
-  }
+
+  dirtyCache();
+  render();
+  saveSnapshot();
 }
 
 // ---- Text tool ----
