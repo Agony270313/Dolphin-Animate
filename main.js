@@ -45,6 +45,13 @@ function createWindow() {
   // mainWindow.webContents.openDevTools();
   mainWindow.setMenuBarVisibility(false);
   Menu.setApplicationMenu(null);
+
+  mainWindow.on('close', (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWindow.webContents.send('request-close');
+    }
+  });
 }
 
 app.whenReady().then(() => {
@@ -204,6 +211,24 @@ ipcMain.handle('read-file', async (event, filePath) => {
   } catch (err) {
     return null;
   }
+});
+
+ipcMain.handle('show-save-prompt', async () => {
+  const res = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: ['Save', "Don't Save", 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+    title: 'Save Project',
+    message: 'Do you want to save the changes to your project?',
+    detail: 'If you don\'t save, your changes will be lost.'
+  });
+  return res.response;
+});
+
+ipcMain.handle('quit-app', () => {
+  app.isQuitting = true;
+  app.quit();
 });
 
 ipcMain.handle('export-sprite-sheet', async (event, { dirPath, fileName, pngData, meta }) => {

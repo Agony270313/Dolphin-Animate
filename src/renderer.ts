@@ -4189,12 +4189,13 @@ function serialize() {
   return JSON.stringify(d);
 }
 
-async function saveProj() {
+async function saveProj(): Promise<boolean> {
   const fp = await ipcRenderer.invoke('save-file', { defaultName: 'project.yunus', filters: [{ name: 'Yunus Project', extensions: ['yunus'] }] });
-  if (!fp) return;
+  if (!fp) return false;
   const r = await ipcRenderer.invoke('write-file', { filePath: fp, data: serialize() });
   if (!r.success) {
     alert('Save failed: ' + r.error);
+    return false;
   } else {
     try {
       let recents = JSON.parse(localStorage.getItem('recentProjects') || '[]');
@@ -4203,6 +4204,7 @@ async function saveProj() {
       if (recents.length > 10) recents.pop();
       localStorage.setItem('recentProjects', JSON.stringify(recents));
     } catch (e) {}
+    return true;
   }
 }
 
@@ -6098,3 +6100,28 @@ function init() {
 }
 try { init(); } catch (e) { console.error('Init error:', e); alert('Init error: ' + e.message + '\n' + e.stack); }
 hr();
+
+ipcRenderer.on('request-close', async () => {
+  // Check if project is essentially empty
+  let empty = false;
+  if (S.frames.length <= 1) {
+    const f = S.frames[0];
+    if (!f || !f.o) empty = true;
+    else if (Object.keys(f.o).length === 0) empty = true;
+    else if (Object.values(f.o).every(arr => (arr as any[]).length === 0)) empty = true;
+  }
+  
+  if (empty) {
+    ipcRenderer.invoke('quit-app');
+    return;
+  }
+  
+  const res = await ipcRenderer.invoke('show-save-prompt');
+  // 0: Save, 1: Don't Save, 2: Cancel
+  if (res === 0) {
+    const success = await saveProj();
+    if (success) ipcRenderer.invoke('quit-app');
+  } else if (res === 1) {
+    ipcRenderer.invoke('quit-app');
+  }
+});
