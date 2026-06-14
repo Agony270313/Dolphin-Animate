@@ -3379,6 +3379,20 @@ function updateTL() {
         cell.classList.add('blank-key');
       } else if (isExtended) {
         cell.classList.add('extended');
+      } else if (!isKey && hasContent) {
+        // This is an interpolated tween frame
+        cell.classList.add('tween');
+        // Add an arrow hint inside the tween cell to look like Adobe Animate
+        const arrow = document.createElement('div');
+        arrow.style.position = 'absolute';
+        arrow.style.top = '50%';
+        arrow.style.left = '50%';
+        arrow.style.transform = 'translate(-50%, -50%)';
+        arrow.style.color = '#333';
+        arrow.style.fontSize = '8px';
+        arrow.style.pointerEvents = 'none';
+        arrow.innerHTML = '→';
+        cell.appendChild(arrow);
       } else {
         cell.classList.add('empty');
       }

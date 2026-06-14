@@ -988,7 +988,7 @@ input[type="range"]:focus {
 /* ---- Time Ruler ---- */
 #tl-ruler {
   height: 18px;
-  background: #323232;
+  background: #333333;
   border-bottom: 1px solid #1a1a1a;
   display: flex;
   position: sticky;
@@ -1000,31 +1000,31 @@ input[type="range"]:focus {
   width: 10px;
   flex-shrink: 0;
   position: relative;
-  border-right: 1px solid #5a5a5a;
+  border-right: 1px solid #444;
 }
 
 .tl-ruler-cell .tl-ruler-num {
   position: absolute;
-  bottom: 1px;
+  bottom: 2px;
   left: 2px;
   font-size: 9px;
-  color: #888;
+  color: #aaa;
   line-height: 1;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 .tl-ruler-cell .tl-ruler-sec {
   position: absolute;
-  bottom: 1px;
+  bottom: 2px;
   right: 2px;
   font-size: 9px;
-  color: #555;
+  color: #777;
   line-height: 1;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
 .tl-ruler-cell.major {
-  border-right-color: #777;
+  border-right-color: #666;
 }
 
 /* ---- Frame rows ---- */
@@ -1036,117 +1036,138 @@ input[type="range"]:focus {
 .tl-frame-row {
   height: 22px;
   display: flex;
-  border-bottom: 1px solid #262626;
+  border-bottom: 1px solid #222;
   border-left: 3px solid transparent;
-  background: #3a3a3a;
+  background: #383838;
 }
 .tl-frame-row + .tl-frame-row {
-  margin-top: 3px;
+  margin-top: 1px;
 }
 .tl-frame-row:nth-child(even) {
-  background: #404040;
+  background: #383838;
 }
 .tl-frame-row:hover {
-  background: #484848;
+  background: #444;
 }
 .tl-frame-row.active {
-  background: #1a3a5c;
-}
-.tl-frame-row.active:hover {
-  background: #1f4370;
+  background: #444;
+  border-left-color: #1473e6;
 }
 .tl-frame-row.selected {
   background: #2a2a4a;
 }
-.tl-frame-row.selected:hover {
-  background: #35355a;
-}
 
-/* ==================== FRAME CELLS - Adobe Animate Gray Style ==================== */
-/* ALL frame cells are gray (not white!) */
+/* ==================== FRAME CELLS - Adobe Animate Style ==================== */
+/* Alternating 5-frame blocks */
 .tl-frame-cell {
   width: 10px;
   height: 22px;
   flex-shrink: 0;
   position: relative;
-  border-right: 1px solid #5a5a5a;
+  border-right: 1px solid #444;
   cursor: pointer;
-  background: #808080;
   box-sizing: border-box;
 }
 
-/* Extended frame (holding content from previous keyframe) - slightly lighter */
+/* Base background alternates every 5 frames using nth-child math, simulated by a repeating gradient or nth-child.
+   Since cells are dynamically generated and DOM order matches index, we can use nth-child.
+   1-5 is dark, 6-10 is slightly lighter */
+.tl-frame-cell:nth-child(10n+1), .tl-frame-cell:nth-child(10n+2), .tl-frame-cell:nth-child(10n+3), .tl-frame-cell:nth-child(10n+4), .tl-frame-cell:nth-child(10n+5) {
+  background: #383838;
+}
+.tl-frame-cell:nth-child(10n+6), .tl-frame-cell:nth-child(10n+7), .tl-frame-cell:nth-child(10n+8), .tl-frame-cell:nth-child(10n+9), .tl-frame-cell:nth-child(10n+10) {
+  background: #333333;
+}
+
+/* Extended frame (holding content from previous keyframe) */
 .tl-frame-cell.extended {
-  background: #999999;
+  background: #444444 !important;
 }
 
-/* Empty frame - standard gray */
+/* Empty frame */
 .tl-frame-cell.empty {
-  background: #808080;
+  /* uses nth-child backgrounds */
 }
 
-/* Keyframe: solid dot inside gray cell */
+/* Tween frame */
+.tl-frame-cell.tween {
+  background: #a3c1e3 !important; /* Adobe blue tween */
+  border-right-color: #8babcc !important;
+}
+
+/* Keyframe: solid black dot */
 .tl-frame-cell.keyframe::after {
   content: '';
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 4px;
-  height: 4px;
-  background: #1a1a1a;
+  width: 5px;
+  height: 5px;
+  background: #111;
   border-radius: 50%;
+  box-shadow: 0 1px 1px rgba(255,255,255,0.2);
 }
 
-/* Blank keyframe: hollow dot inside gray cell */
+/* Blank keyframe: hollow dot */
 .tl-frame-cell.blank-key::after {
   content: '';
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 4px;
-  height: 4px;
+  width: 5px;
+  height: 5px;
   background: transparent;
-  border: 1px solid #333;
+  border: 1px solid #111;
   border-radius: 50%;
+  box-shadow: 0 1px 1px rgba(255,255,255,0.2);
 }
 
-/* Active frame highlight - Adobe blue */
+/* Active frame highlight - Adobe selection blue */
 .tl-frame-cell.active {
-  background: #0078d7 !important;
+  background: #1473e6 !important;
+  border: 1px solid #fff;
+  border-radius: 2px;
+  z-index: 1;
 }
-.tl-frame-cell.active.keyframe::after,
-.tl-frame-cell.active.blank-key::after {
+.tl-frame-cell.active.keyframe::after {
   background: #fff;
+  box-shadow: none;
+}
+.tl-frame-cell.active.blank-key::after {
   border-color: #fff;
+  box-shadow: none;
+}
+.tl-frame-cell.active.tween {
+  color: #fff !important;
+}
+.tl-frame-cell.active.tween > div {
+  color: #fff !important;
 }
 
 /* Selected frames - subtle blue tint */
 .tl-frame-cell.selected {
-  background: #5a8fc9 !important;
+  background: #3a5c88 !important;
 }
 
 /* Multi-selection */
 .tl-frame-cell.multi-sel {
-  background: #6a9fd9 !important;
+  background: #3a5c88 !important;
 }
 
 /* Hover effect on cells */
-.tl-frame-cell:hover {
-  filter: brightness(1.1);
+.tl-frame-cell:hover::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(255,255,255,0.1);
+  pointer-events: none;
 }
 
 /* Edge resize zone hint */
 .tl-frame-cell:hover::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  background: rgba(255,255,255,0.08);
-  pointer-events: none;
+  /* Override dot to stay visible on hover if needed, or don't use ::after for hover hint */
 }
 
 /* ==================== PLAYHEAD - Adobe Animate Red ==================== */
@@ -1155,24 +1176,23 @@ input[type="range"]:focus {
   top: 18px; /* below ruler */
   bottom: 0;
   width: 1px;
-  background: #ff0000;
+  background: #e60000;
   z-index: 10;
   pointer-events: none;
 }
 
-/* Ruler playhead marker - red triangle */
+/* Ruler playhead marker - red rectangle block */
 #tl-playhead::before {
   content: '';
   position: absolute;
   top: -18px;
   left: -4px;
-  width: 0;
-  height: 0;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-top: 6px solid #ff0000;
-  background: transparent;
-  border-radius: 0;
+  width: 9px;
+  height: 18px;
+  background: rgba(230, 0, 0, 0.4);
+  border: 1px solid #e60000;
+  border-radius: 2px;
+  box-sizing: border-box;
 }
 
 /* Context menu in timeline */
