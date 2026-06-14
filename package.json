@@ -36,6 +36,9 @@
       "allowToChangeInstallationDirectory": false,
       "deleteAppDataOnUninstall": false
     },
+    "releaseInfo": {
+      "releaseNotesFile": "release-notes.md"
+    },
     "publish": {
       "provider": "github",
       "owner": "Agony270313",
