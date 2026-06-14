@@ -482,6 +482,7 @@
       <div class="ss-settings-section" style="display: none; width: 100%;">
         <h1 class="ss-title">Settings</h1>
         <div class="ss-custom" style="margin-top: 20px;">
+          <h2 style="margin-bottom:10px;">General</h2>
           <div class="ss-custom-row">
             <div class="ss-input-group" style="flex: 1;">
               <label>Timeline Theme</label>
@@ -490,11 +491,28 @@
                 <option value="adobe">Adobe Animate</option>
               </select>
             </div>
+            <div class="ss-input-group" style="flex: 1;">
+              <label>Auto-Save Interval</label>
+              <select id="setting-autosave" style="width: 100%; max-width: 300px; padding: 10px; background: #2d2d2d; border: 1px solid #444; color: white; border-radius: 4px; font-size: 14px; outline: none; font-family: inherit;">
+                <option value="0">Off</option>
+                <option value="1">Every 1 Minute</option>
+                <option value="5">Every 5 Minutes</option>
+                <option value="10">Every 10 Minutes</option>
+              </select>
+            </div>
           </div>
+          
+          <h2 style="margin-top:30px; margin-bottom:10px;">Keyboard Shortcuts</h2>
+          <div id="keybindings-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px;">
+            <!-- Keybindings will be populated here -->
+          </div>
+          <p style="color: #888; font-size: 12px; font-style: italic;">Click on a key and press a new key to change the shortcut.</p>
         </div>
       </div>
     </div>
   </div>
+
+  <div id="toast-container" style="position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px;"></div>
 
   <script type="module" src="/src/renderer.ts"></script>
 </body>

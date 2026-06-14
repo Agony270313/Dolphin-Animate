@@ -15,6 +15,73 @@ import { initAudioUI, renderAudioTimeline, playAudioAtFrame, pauseAudio, loopAud
 export let savedState: any = null;
 export let currentProjectPath: string | null = null;
 
+export const defaultKeybindings: Record<string, string> = {
+  'play_pause': ' ',
+  'undo': 'Ctrl+z',
+  'redo': 'Ctrl+y',
+  'brush': 'b',
+  'pencil': 'p',
+  'eraser': 'e',
+  'rect': 'r',
+  'circle': 'o',
+  'line': 'l',
+  'fill': 'g',
+  'select': 'v',
+  'text': 't',
+  'pen': 'a',
+  'guide': 'm',
+  'convert_to_symbol': 'F8',
+  'group': 'g',
+  'ungroup': 'Shift+G',
+  'copy': 'Ctrl+c',
+  'paste': 'Ctrl+v',
+  'cut': 'Ctrl+x',
+  'duplicate': 'Ctrl+d',
+  'create_tween': 'Ctrl+t',
+  'import_image': 'Ctrl+i',
+  'zoom_in': 'Ctrl+=',
+  'zoom_out': 'Ctrl+-',
+  'zoom_reset': 'Ctrl+0',
+  'new_project': 'Ctrl+n',
+  'open_project': 'Ctrl+o',
+  'save_project': 'Ctrl+s',
+  'save_project_as': 'Ctrl+Shift+S',
+};
+
+export let KeyMap: Record<string, string> = { ...defaultKeybindings };
+try {
+  const savedKeys = localStorage.getItem('keybindings');
+  if (savedKeys) KeyMap = { ...defaultKeybindings, ...JSON.parse(savedKeys) };
+} catch(e) {}
+
+export function showToast(msg: string) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'toast-msg';
+  div.innerText = msg;
+  container.appendChild(div);
+  setTimeout(() => div.remove(), 3000);
+}
+
+export function matchKey(e: KeyboardEvent, shortcut: string): boolean {
+  if (!shortcut) return false;
+  const parts = shortcut.split('+').map(p => p.trim());
+  const key = parts.pop();
+  if (!key) return false;
+  
+  const requiresCtrl = parts.some(p => p.toLowerCase() === 'ctrl' || p.toLowerCase() === 'cmd');
+  const requiresShift = parts.some(p => p.toLowerCase() === 'shift');
+  const requiresAlt = parts.some(p => p.toLowerCase() === 'alt');
+
+  if (e.ctrlKey !== requiresCtrl) return false;
+  if (e.shiftKey !== requiresShift) return false;
+  if (e.altKey !== requiresAlt) return false;
+  
+  if (key === ' ' && e.key === ' ') return true;
+  return e.key.toLowerCase() === key.toLowerCase();
+}
+
 export function enterIsolationMode(symbolId: string, instanceRef?: {layerId: string, idx: number}) {
   if (IsolationMode) return;
   if (!Symbols[symbolId]) return;
@@ -5572,96 +5639,112 @@ function setupEvents() {
   });
 
   document.addEventListener('keydown', e => {
-    // Space: play/pause, but never when typing in text/number inputs
-    if (e.key === ' ') {
-      const tag = e.target.tagName;
-      const type = e.target.type;
+    // Check if we are focusing an input inside the Settings tab specifically for keybinding
+    if ((e.target as HTMLElement).classList && (e.target as HTMLElement).classList.contains('keycap-btn')) {
+      e.preventDefault();
+      return;
+    }
+    
+    // Play/pause: never when typing in text/number inputs
+    if (matchKey(e, KeyMap['play_pause'])) {
+      const tag = (e.target as HTMLElement).tagName;
+      const type = (e.target as HTMLInputElement).type;
       if (tag === 'TEXTAREA' || (tag === 'INPUT' && (type === 'text' || type === 'number' || type === 'search'))) return;
       e.preventDefault(); play(); return;
     }
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
     
     // Top Bar shortcuts
-    if (e.ctrlKey && e.key.toLowerCase() === 'n') { e.preventDefault(); $('new-project').click(); return; }
-    if (e.ctrlKey && e.key.toLowerCase() === 'o') { e.preventDefault(); $('open-project').click(); return; }
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); saveProj(true); return; }
-    if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); $('save-project').click(); return; }
+    if (matchKey(e, KeyMap['new_project'])) { e.preventDefault(); $('new-project').click(); return; }
+    if (matchKey(e, KeyMap['open_project'])) { e.preventDefault(); $('open-project').click(); return; }
+    if (matchKey(e, KeyMap['save_project_as'])) { e.preventDefault(); saveProj(true); return; }
+    if (matchKey(e, KeyMap['save_project'])) { e.preventDefault(); $('save-project').click(); return; }
     
-    const k = e.key;
     if (S.playing) return;
-    if (e.ctrlKey) {
-      if (k === 'z') { e.preventDefault(); undo(); return; }
-      if (k === 'y') { e.preventDefault(); redo(); return; }
-      if (k === '0') { e.preventDefault(); centerZoom(); return; }
-      if (k === '=') { e.preventDefault(); zoomAt(1); return; }
-      if (k === '-') { e.preventDefault(); zoomAt(-1); return; }
-      if (k === 'c') {
-        e.preventDefault();
-        if (S.selObjs.length) copySel();
-        else copyFrameContent();
-        return;
+
+    if (matchKey(e, KeyMap['undo'])) { e.preventDefault(); undo(); return; }
+    if (matchKey(e, KeyMap['redo'])) { e.preventDefault(); redo(); return; }
+    if (matchKey(e, KeyMap['zoom_reset'])) { e.preventDefault(); centerZoom(); return; }
+    if (matchKey(e, KeyMap['zoom_in'])) { e.preventDefault(); zoomAt(1); return; }
+    if (matchKey(e, KeyMap['zoom_out'])) { e.preventDefault(); zoomAt(-1); return; }
+    
+    if (matchKey(e, KeyMap['copy'])) {
+      e.preventDefault();
+      if (S.selObjs.length) copySel();
+      else copyFrameContent();
+      return;
+    }
+    if (matchKey(e, KeyMap['cut'])) { e.preventDefault(); cutSel(); return; }
+    
+    if (matchKey(e, KeyMap['duplicate'])) {
+      e.preventDefault();
+      if (S.selObjs.length) {
+        const newRefs = [];
+        for (const ref of S.selObjs) {
+          const obj = obs(S.frameIdx, ref.layerId)[ref.idx];
+          const c = cloneObj(obj);
+          if (c.pts) c.pts = c.pts.map(p => ({ x: p.x + 10, y: p.y + 10, ...(p.p !== undefined ? { p: p.p } : {}) }));
+          if (c.x1 != null) { c.x1 += 10; c.y1 += 10; c.x2 += 10; c.y2 += 10; }
+          if (c.type === 'text') { c.x += 10; c.y += 10; }
+          if (c.type === 'group' && c.children) {
+            for (const ch of c.children) {
+              if (ch.pts) ch.pts = ch.pts.map(p => ({ x: p.x + 10, y: p.y + 10, ...(p.p !== undefined ? { p: p.p } : {}) }));
+              if (ch.x1 != null) { ch.x1 += 10; ch.y1 += 10; ch.x2 += 10; ch.y2 += 10; }
+              if (ch.type === 'text') { ch.x += 10; ch.y += 10; }
+            }
+          }
+          const objs = obs(S.frameIdx, ref.layerId);
+          objs.push(c);
+          newRefs.push({ layerId: ref.layerId, idx: objs.length - 1 });
+        }
+        S.selObjs = newRefs;
+        dirtyCache(); fullRender(); drawSelection(); saveSnapshot();
       }
-      if (k === 'x') { e.preventDefault(); cutSel(); return; }
-      if (k === 'd') {
-        e.preventDefault();
-        if (S.selObjs.length) {
+      return;
+    }
+    
+    if (matchKey(e, KeyMap['create_tween'])) { e.preventDefault(); tweenAll(); return; }
+    
+    if (matchKey(e, KeyMap['paste'])) {
+      e.preventDefault();
+      if (_clipboard) {
+        const l = L();
+        if (l) {
+          const objs = obs(S.frameIdx, l.id);
+          const items = Array.isArray(_clipboard) ? _clipboard : [_clipboard];
           const newRefs = [];
-          for (const ref of S.selObjs) {
-            const obj = obs(S.frameIdx, ref.layerId)[ref.idx];
-            const c = cloneObj(obj);
+          for (const item of items) {
+            const c = cloneObj(item);
             if (c.pts) c.pts = c.pts.map(p => ({ x: p.x + 10, y: p.y + 10, ...(p.p !== undefined ? { p: p.p } : {}) }));
             if (c.x1 != null) { c.x1 += 10; c.y1 += 10; c.x2 += 10; c.y2 += 10; }
             if (c.type === 'text') { c.x += 10; c.y += 10; }
-            if (c.type === 'group' && c.children) {
-              for (const ch of c.children) {
-                if (ch.pts) ch.pts = ch.pts.map(p => ({ x: p.x + 10, y: p.y + 10, ...(p.p !== undefined ? { p: p.p } : {}) }));
-                if (ch.x1 != null) { ch.x1 += 10; ch.y1 += 10; ch.x2 += 10; ch.y2 += 10; }
-                if (ch.type === 'text') { ch.x += 10; ch.y += 10; }
-              }
-            }
-            const objs = obs(S.frameIdx, ref.layerId);
             objs.push(c);
-            newRefs.push({ layerId: ref.layerId, idx: objs.length - 1 });
+            newRefs.push({ layerId: l.id, idx: objs.length - 1 });
           }
           S.selObjs = newRefs;
           dirtyCache(); fullRender(); drawSelection(); saveSnapshot();
         }
-        return;
+      } else if (_frameClipboard) {
+        pasteFrameContent();
       }
-      if (k === 't') { e.preventDefault(); tweenAll(); return; }
-      if (k === 'v') {
-        e.preventDefault();
-        if (_clipboard) {
-          const l = L();
-          if (l) {
-            const objs = obs(S.frameIdx, l.id);
-            const items = Array.isArray(_clipboard) ? _clipboard : [_clipboard];
-            const newRefs = [];
-            for (const item of items) {
-              const c = cloneObj(item);
-              if (c.pts) c.pts = c.pts.map(p => ({ x: p.x + 10, y: p.y + 10, ...(p.p !== undefined ? { p: p.p } : {}) }));
-              if (c.x1 != null) { c.x1 += 10; c.y1 += 10; c.x2 += 10; c.y2 += 10; }
-              if (c.type === 'text') { c.x += 10; c.y += 10; }
-              objs.push(c);
-              newRefs.push({ layerId: l.id, idx: objs.length - 1 });
-            }
-            S.selObjs = newRefs;
-            dirtyCache(); fullRender(); drawSelection(); saveSnapshot();
-          }
-        } else if (_frameClipboard) {
-          pasteFrameContent();
-        }
-        return;
-      }
-      if (k === 'F8') { e.preventDefault(); convertToSymbol(); return; }
-      if (k === 'g' && !e.shiftKey) { e.preventDefault(); groupSelected(); return; }
-      if (k === 'g' && e.shiftKey) { e.preventDefault(); ungroupSelected(); return; }
-      if (k === 'i') { e.preventDefault(); importImage(); return; }
+      return;
     }
-    const tm = { b: 'brush', p: 'pencil', e: 'eraser', r: 'rect', o: 'circle', l: 'line', g: 'fill', v: 'select', t: 'text', a: 'pen', m: 'guide' };
-    if (tm[k]) { e.preventDefault(); switchTool(tm[k]); return; }
-    // Arrow keys: move selected objects (if any), else navigate timeline
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(k)) {
+    
+    if (matchKey(e, KeyMap['convert_to_symbol'])) { e.preventDefault(); convertToSymbol(); return; }
+    if (matchKey(e, KeyMap['group'])) { e.preventDefault(); groupSelected(); return; }
+    if (matchKey(e, KeyMap['ungroup'])) { e.preventDefault(); ungroupSelected(); return; }
+    if (matchKey(e, KeyMap['import_image'])) { e.preventDefault(); importImage(); return; }
+
+    const tools = ['brush', 'pencil', 'eraser', 'rect', 'circle', 'line', 'fill', 'select', 'text', 'pen', 'guide'];
+    for (const t of tools) {
+      if (matchKey(e, KeyMap[t])) {
+        e.preventDefault();
+        switchTool(t as any);
+        return;
+      }
+    }
+
+    const k = e.key;
       if (S.selObjs.length > 0) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
@@ -6298,6 +6381,17 @@ function setupStartScreen() {
     });
   }
 
+  const autosaveSelect = $('setting-autosave') as HTMLSelectElement;
+  if (autosaveSelect) {
+    autosaveSelect.value = localStorage.getItem('autoSaveInterval') || '0';
+    autosaveSelect.addEventListener('change', () => {
+      localStorage.setItem('autoSaveInterval', autosaveSelect.value);
+      setupAutoSave();
+    });
+  }
+
+  renderKeybindingsUI();
+
   // Open button
   $('ss-open-btn').onclick = async () => {
     const success = await openProj();
@@ -6338,6 +6432,93 @@ function setupStartScreen() {
 }
 
 // ==================== INIT ====================
+
+let autoSaveTimer: any = null;
+export function setupAutoSave() {
+  if (autoSaveTimer) clearInterval(autoSaveTimer);
+  const intervalStr = localStorage.getItem('autoSaveInterval') || '0';
+  const minutes = parseInt(intervalStr);
+  if (minutes > 0) {
+    autoSaveTimer = setInterval(() => {
+      if (currentProjectPath) {
+        saveProj(false);
+        showToast(`Auto-saved at ${new Date().toLocaleTimeString()}`);
+      }
+    }, minutes * 60 * 1000);
+  }
+}
+
+export function renderKeybindingsUI() {
+  const container = $('keybindings-list');
+  if (!container) return;
+  container.innerHTML = '';
+  
+  const labelMap: Record<string, string> = {
+    'play_pause': 'Play / Pause', 'undo': 'Undo', 'redo': 'Redo',
+    'brush': 'Brush Tool', 'pencil': 'Pencil Tool', 'eraser': 'Eraser Tool',
+    'rect': 'Rectangle', 'circle': 'Circle', 'line': 'Line', 'fill': 'Fill Bucket',
+    'select': 'Selection Tool', 'text': 'Text Tool', 'pen': 'Pen Tool', 'guide': 'Motion Guide',
+    'convert_to_symbol': 'Convert to Symbol', 'group': 'Group', 'ungroup': 'Ungroup',
+    'copy': 'Copy', 'paste': 'Paste', 'cut': 'Cut', 'duplicate': 'Duplicate',
+    'create_tween': 'Create Classic Tween', 'import_image': 'Import Image',
+    'zoom_in': 'Zoom In', 'zoom_out': 'Zoom Out', 'zoom_reset': 'Reset Zoom',
+    'new_project': 'New Project', 'open_project': 'Open Project', 'save_project': 'Save', 'save_project_as': 'Save As'
+  };
+
+  for (const cmd of Object.keys(defaultKeybindings)) {
+    const item = document.createElement('div');
+    item.className = 'keybinding-item';
+    
+    const label = document.createElement('span');
+    label.className = 'keybinding-label';
+    label.innerText = labelMap[cmd] || cmd;
+    
+    const btn = document.createElement('button');
+    btn.className = 'keycap-btn';
+    btn.innerText = KeyMap[cmd];
+    btn.dataset.cmd = cmd;
+    
+    btn.onclick = () => {
+      document.querySelectorAll('.keycap-btn').forEach(b => b.classList.remove('listening'));
+      btn.classList.add('listening');
+      btn.innerText = 'Press key...';
+      
+      const onKeyDown = (e: KeyboardEvent) => {
+        e.preventDefault();
+        if (e.key === 'Escape') {
+          btn.classList.remove('listening');
+          btn.innerText = KeyMap[cmd];
+          document.removeEventListener('keydown', onKeyDown);
+          return;
+        }
+        
+        let newShortcut = '';
+        if (e.ctrlKey || e.metaKey) newShortcut += 'Ctrl+';
+        if (e.shiftKey) newShortcut += 'Shift+';
+        if (e.altKey) newShortcut += 'Alt+';
+        
+        const k = e.key;
+        if (['Control', 'Shift', 'Alt', 'Meta'].includes(k)) return; // Wait for actual key
+        
+        if (k === ' ') newShortcut += ' ';
+        else newShortcut += k.length === 1 ? k.toLowerCase() : k;
+        
+        KeyMap[cmd] = newShortcut;
+        localStorage.setItem('keybindings', JSON.stringify(KeyMap));
+        btn.innerText = newShortcut;
+        btn.classList.remove('listening');
+        document.removeEventListener('keydown', onKeyDown);
+      };
+      
+      document.addEventListener('keydown', onKeyDown);
+    };
+    
+    item.appendChild(label);
+    item.appendChild(btn);
+    container.appendChild(item);
+  }
+}
+
 function init() {
   applyZoom();
   S.layers = [mkLayer('Layer 1')];
@@ -6375,6 +6556,7 @@ function init() {
   saveSnapshot();
   // Auto-save every 30 seconds
   setInterval(autoSave, 30000);
+  setupAutoSave();
 
   // Hide loading screen
   setTimeout(() => {
