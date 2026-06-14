@@ -4126,6 +4126,12 @@ async function expSpriteSheet(fn, s, e, sc) {
 }
 
 // ==================== PROJECT ====================
+if ($('home-btn')) {
+  $('home-btn').onclick = () => {
+    const startScreen = $('start-screen');
+    if (startScreen) startScreen.style.display = 'flex';
+  };
+}
 $('save-project').onclick = saveProj;
 $('open-project').onclick = openProj;
 $('new-project').onclick = () => {
