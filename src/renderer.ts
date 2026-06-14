@@ -1829,7 +1829,6 @@ function doFill(c) {
               if (c.type === 'stroke' || c.type === 'fillPath') c.color = S.stroke;
               if (c.type === 'circle' || c.type === 'rect') { c.color = S.stroke; c.fillColor = S.stroke; }
             }
-            dirtyCache(); render(); saveSnapshot();
           }
           return true;
         }
@@ -1853,7 +1852,6 @@ function doFill(c) {
           // Click exactly on the stroke
           if (Math.abs(d - 1) < 0.2) {
             o.color = S.stroke;
-            dirtyCache(); render(); saveSnapshot();
             return true;
           }
           // Click inside the circle
@@ -1864,7 +1862,6 @@ function doFill(c) {
             } else {
               o.fillColor = S.stroke;
             }
-            dirtyCache(); render(); saveSnapshot();
             return true;
           }
         }
@@ -1876,7 +1873,6 @@ function doFill(c) {
         const onEdge = (Math.abs(tp.x - x1) < tol || Math.abs(tp.x - x2) < tol || Math.abs(tp.y - y1) < tol || Math.abs(tp.y - y2) < tol) && tp.x >= x1 - tol && tp.x <= x2 + tol && tp.y >= y1 - tol && tp.y <= y2 + tol;
         if (onEdge) {
           o.color = S.stroke;
-          dirtyCache(); render(); saveSnapshot();
           return true;
         }
         // Click inside the rect
@@ -1887,7 +1883,6 @@ function doFill(c) {
           } else {
             o.fillColor = S.stroke;
           }
-          dirtyCache(); render(); saveSnapshot();
           return true;
         }
       } else if (o.type === 'fillPath' && o.pts) {
@@ -1899,7 +1894,6 @@ function doFill(c) {
         }
         if (inside) {
           o.color = S.stroke;
-          dirtyCache(); render(); saveSnapshot();
           return true;
         }
       } else if (o.type === 'stroke') {
@@ -1921,7 +1915,6 @@ function doFill(c) {
         }
         if (hit) {
           o.color = S.stroke;
-          dirtyCache(); render(); saveSnapshot();
           return true;
         }
       }
@@ -1929,7 +1922,10 @@ function doFill(c) {
     return false;
   }
   
-  if (checkVectorFill(objs, tpWorld)) return;
+  if (checkVectorFill(objs, tpWorld)) {
+    dirtyCache(); render(); saveSnapshot();
+    return;
+  }
 
   // 1. Render strokes/shapes to a transparent canvas (NO background)
   const wall = document.createElement('canvas');
