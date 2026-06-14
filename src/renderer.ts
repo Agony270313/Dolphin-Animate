@@ -1821,7 +1821,18 @@ function doFill(c) {
       const tp = m ? inverseTransformPoint(currentTp, m) : currentTp;
 
       if (o.type === 'group' && o.children) {
-        if (checkVectorFill(o.children, tp)) return true;
+        if (checkVectorFill(o.children, tp)) {
+          // If it's a fill group (contains a fillPath and only strokes/fillPaths), color the entire group!
+          const isAutoGroup = o.autoGroup || (o.children.some(c => c.type === 'fillPath') && o.children.every(c => c.type === 'stroke' || c.type === 'fillPath'));
+          if (isAutoGroup) {
+            for (const c of o.children) {
+              if (c.type === 'stroke' || c.type === 'fillPath') c.color = S.stroke;
+              if (c.type === 'circle' || c.type === 'rect') { c.color = S.stroke; c.fillColor = S.stroke; }
+            }
+            dirtyCache(); render(); saveSnapshot();
+          }
+          return true;
+        }
         continue;
       }
       if (o.type === 'symbol' && o.symbolId) {
@@ -1847,7 +1858,12 @@ function doFill(c) {
           }
           // Click inside the circle
           if (d <= 1) {
-            o.fillColor = S.stroke;
+            if (o.fillColor && o.fillColor !== 'transparent' && o.fillColor !== '') {
+              o.color = S.stroke;
+              o.fillColor = S.stroke;
+            } else {
+              o.fillColor = S.stroke;
+            }
             dirtyCache(); render(); saveSnapshot();
             return true;
           }
@@ -1865,7 +1881,12 @@ function doFill(c) {
         }
         // Click inside the rect
         if (tp.x >= x1 && tp.x <= x2 && tp.y >= y1 && tp.y <= y2) {
-          o.fillColor = S.stroke;
+          if (o.fillColor && o.fillColor !== 'transparent' && o.fillColor !== '') {
+            o.color = S.stroke;
+            o.fillColor = S.stroke;
+          } else {
+            o.fillColor = S.stroke;
+          }
           dirtyCache(); render(); saveSnapshot();
           return true;
         }
