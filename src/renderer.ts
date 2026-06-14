@@ -5974,7 +5974,25 @@ function renderRecentProjects() {
           <div class="ss-recent-name">${p.name}</div>
           <div class="ss-recent-path">${p.path}</div>
         </div>
+        <div class="ss-recent-del" title="Remove from list" style="padding: 5px; cursor: pointer; color: #888; display: flex; align-items: center; justify-content: center;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </div>
       `;
+      const delBtn = item.querySelector('.ss-recent-del');
+      if (delBtn) {
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const updated = recents.filter((r: any) => r.path !== p.path);
+          localStorage.setItem('recentProjects', JSON.stringify(updated));
+          renderRecentProjects();
+        });
+        delBtn.addEventListener('mouseover', () => (delBtn as HTMLElement).style.color = '#ff5555');
+        delBtn.addEventListener('mouseout', () => (delBtn as HTMLElement).style.color = '#888');
+      }
+
       item.onclick = async () => {
         const success = await openProj(p.path);
         if (success) {
@@ -6114,6 +6132,13 @@ try { init(); } catch (e) { console.error('Init error:', e); alert('Init error: 
 hr();
 
 ipcRenderer.on('request-close', async () => {
+  // If we are on the start screen, do not prompt for saving
+  const startScreen = $('start-screen');
+  if (startScreen && startScreen.style.display !== 'none') {
+    ipcRenderer.invoke('quit-app');
+    return;
+  }
+
   // Check if project is essentially empty
   let empty = false;
   if (S.frames.length <= 1) {
