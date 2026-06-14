@@ -836,10 +836,10 @@ input[type="range"]:focus {
   background: #484848;
 }
 .tl-layer-row.active {
-  background: #1a3a5c;
+  background: #2a5d91;
 }
 .tl-layer-row.active:hover {
-  background: #1f4370;
+  background: #3168a3;
 }
 .tl-layer-row.selected {
   background: #2a2a4a;
@@ -1038,23 +1038,13 @@ input[type="range"]:focus {
   display: flex;
   border-bottom: 1px solid #222;
   border-left: 3px solid transparent;
-  background: #383838;
+  background: transparent;
 }
 .tl-frame-row + .tl-frame-row {
   margin-top: 1px;
 }
-.tl-frame-row:nth-child(even) {
-  background: #383838;
-}
-.tl-frame-row:hover {
-  background: #444;
-}
 .tl-frame-row.active {
-  background: #444;
-  border-left-color: #1473e6;
-}
-.tl-frame-row.selected {
-  background: #2a2a4a;
+  background: rgba(255, 255, 255, 0.05); /* very subtle highlight if any */
 }
 
 /* ==================== FRAME CELLS - Adobe Animate Style ==================== */
@@ -1064,29 +1054,24 @@ input[type="range"]:focus {
   height: 22px;
   flex-shrink: 0;
   position: relative;
-  border-right: 1px solid #444;
+  border-right: 1px solid #2a2a2a;
   cursor: pointer;
   box-sizing: border-box;
 }
 
-/* Base background alternates every 5 frames using nth-child math, simulated by a repeating gradient or nth-child.
-   Since cells are dynamically generated and DOM order matches index, we can use nth-child.
+/* Empty frame background alternates every 5 frames
    1-5 is dark, 6-10 is slightly lighter */
-.tl-frame-cell:nth-child(10n+1), .tl-frame-cell:nth-child(10n+2), .tl-frame-cell:nth-child(10n+3), .tl-frame-cell:nth-child(10n+4), .tl-frame-cell:nth-child(10n+5) {
+.tl-frame-cell.empty:nth-child(10n+1), .tl-frame-cell.empty:nth-child(10n+2), .tl-frame-cell.empty:nth-child(10n+3), .tl-frame-cell.empty:nth-child(10n+4), .tl-frame-cell.empty:nth-child(10n+5) {
   background: #383838;
 }
-.tl-frame-cell:nth-child(10n+6), .tl-frame-cell:nth-child(10n+7), .tl-frame-cell:nth-child(10n+8), .tl-frame-cell:nth-child(10n+9), .tl-frame-cell:nth-child(10n+10) {
-  background: #333333;
+.tl-frame-cell.empty:nth-child(10n+6), .tl-frame-cell.empty:nth-child(10n+7), .tl-frame-cell.empty:nth-child(10n+8), .tl-frame-cell.empty:nth-child(10n+9), .tl-frame-cell.empty:nth-child(10n+10) {
+  background: #2d2d2d;
 }
 
-/* Extended frame (holding content from previous keyframe) */
-.tl-frame-cell.extended {
-  background: #444444 !important;
-}
-
-/* Empty frame */
-.tl-frame-cell.empty {
-  /* uses nth-child backgrounds */
+/* Extended frame & Keyframe (Active frames) - Light gray */
+.tl-frame-cell.extended, .tl-frame-cell.keyframe, .tl-frame-cell.blank-key {
+  background: #cccccc !important;
+  border-right: 1px solid #bbbbbb;
 }
 
 /* Tween frame */
@@ -1095,18 +1080,18 @@ input[type="range"]:focus {
   border-right-color: #8babcc !important;
 }
 
-/* Keyframe: solid black dot */
+/* Keyframe: solid tiny black dot */
 .tl-frame-cell.keyframe::after {
   content: '';
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 5px;
-  height: 5px;
-  background: #111;
+  width: 4px;
+  height: 4px;
+  background: #000;
   border-radius: 50%;
-  box-shadow: 0 1px 1px rgba(255,255,255,0.2);
+  box-shadow: none;
 }
 
 /* Blank keyframe: hollow dot */
@@ -1116,28 +1101,26 @@ input[type="range"]:focus {
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   background: transparent;
-  border: 1px solid #111;
+  border: 1px solid #000;
   border-radius: 50%;
-  box-shadow: 0 1px 1px rgba(255,255,255,0.2);
+  box-shadow: none;
 }
 
 /* Active frame highlight - Adobe selection blue */
 .tl-frame-cell.active {
   background: #1473e6 !important;
-  border: 1px solid #fff;
+  border: 1px solid #1473e6;
   border-radius: 2px;
   z-index: 1;
 }
 .tl-frame-cell.active.keyframe::after {
   background: #fff;
-  box-shadow: none;
 }
 .tl-frame-cell.active.blank-key::after {
   border-color: #fff;
-  box-shadow: none;
 }
 .tl-frame-cell.active.tween {
   color: #fff !important;
@@ -1148,12 +1131,12 @@ input[type="range"]:focus {
 
 /* Selected frames - subtle blue tint */
 .tl-frame-cell.selected {
-  background: #3a5c88 !important;
+  background: #8faecf !important;
 }
 
 /* Multi-selection */
 .tl-frame-cell.multi-sel {
-  background: #3a5c88 !important;
+  background: #8faecf !important;
 }
 
 /* Hover effect on cells */
@@ -1165,23 +1148,18 @@ input[type="range"]:focus {
   pointer-events: none;
 }
 
-/* Edge resize zone hint */
-.tl-frame-cell:hover::after {
-  /* Override dot to stay visible on hover if needed, or don't use ::after for hover hint */
-}
-
-/* ==================== PLAYHEAD - Adobe Animate Red ==================== */
+/* ==================== PLAYHEAD - Adobe Animate Blue ==================== */
 #tl-playhead {
   position: absolute;
   top: 18px; /* below ruler */
   bottom: 0;
   width: 1px;
-  background: #e60000;
+  background: #2d7bd5;
   z-index: 10;
   pointer-events: none;
 }
 
-/* Ruler playhead marker - red rectangle block */
+/* Ruler playhead marker - blue rectangle block */
 #tl-playhead::before {
   content: '';
   position: absolute;
@@ -1189,8 +1167,8 @@ input[type="range"]:focus {
   left: -4px;
   width: 9px;
   height: 18px;
-  background: rgba(230, 0, 0, 0.4);
-  border: 1px solid #e60000;
+  background: rgba(45, 123, 213, 0.4);
+  border: 1px solid #2d7bd5;
   border-radius: 2px;
   box-sizing: border-box;
 }
