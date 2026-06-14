@@ -3093,6 +3093,7 @@ let _selectedFrames = new Set();
 let _tlRangeAnchor = -1;
 
 function updateTL() {
+  if (S.playing) { updateTLPlayback(); return; }
   const nf = S.frames.length;
   const curL = L();
 
@@ -3752,6 +3753,8 @@ function cloneFill(o) {
 
 // ==================== PLAYBACK ====================
 let _pi = null;
+let _playbackStartTime = 0;
+let _startFrameIdx = 0;
 
 // ---- SVG Icons (Adobe Animate style) ----
 // Defined at top level so updateTL() can use them before setupEvents() runs
@@ -3808,6 +3811,52 @@ const icons = {
   tlLast: '<svg viewBox="0 0 16 16"><polygon points="6,2 13,8 6,14" fill="currentColor"/><line x1="3" y1="2" x2="3" y2="14" stroke="currentColor" stroke-width="1.5"/></svg>',
 };
 
+function updateTLPlayback() {
+  const fNum = $('tl-frame-num');
+  if (fNum) fNum.innerHTML = (S.frameIdx + 1) + ' <sup>F</sup>';
+  
+  const ph = $('tl-playhead');
+  const cw = typeof cellW === 'function' ? cellW() : Math.max(10, S.tlZoom * 20);
+  if (ph) ph.style.left = ((S.frameIdx * cw) + (cw / 2)) + 'px';
+  
+  const scroll = $('timeline-scroll');
+  if (scroll) {
+    const targetScroll = S.frameIdx * cw - scroll.clientWidth / 2 + cw / 2;
+    scroll.scrollLeft = Math.max(0, targetScroll);
+  }
+}
+
+function playbackLoop(timestamp) {
+  if (!S.playing) return;
+  
+  if (_playbackStartTime === 0) _playbackStartTime = timestamp;
+  const elapsed = timestamp - _playbackStartTime;
+  const expectedFrame = _startFrameIdx + Math.floor(elapsed * S.fps / 1000);
+  
+  if (expectedFrame !== S.frameIdx) {
+    if (expectedFrame >= S.frames.length) {
+      if (S.loop) {
+        S.frameIdx = 0;
+        _startFrameIdx = 0;
+        _playbackStartTime = timestamp;
+        loopAudioPlay();
+      } else {
+        S.frameIdx = S.frames.length - 1;
+        play(); // stops playback
+        return;
+      }
+    } else {
+      S.frameIdx = expectedFrame;
+    }
+    
+    checkAudioFrame(S.frameIdx, S.fps);
+    updateTLPlayback();
+    fullRender();
+  }
+  
+  _pi = requestAnimationFrame(playbackLoop);
+}
+
 function play() {
   S.playing = !S.playing;
   const tlBtn = $('tl-play-btn');
@@ -3818,18 +3867,18 @@ function play() {
       updateTL();
       fullRender();
     }
+    _startFrameIdx = S.frameIdx;
+    _playbackStartTime = performance.now();
     playAudioAtFrame(S.frameIdx, S.fps);
-    _pi = setInterval(() => {
-      if (S.frameIdx < S.frames.length - 1) S.frameIdx++;
-      else if (S.loop) {
-        S.frameIdx = 0;
-        loopAudioPlay();
-      }
-      else { play(); return; }
-      checkAudioFrame(S.frameIdx, S.fps);
-      updateTL(); fullRender();
-    }, 1000 / S.fps);
-  } else { clearInterval(_pi); _pi = null; pauseAudio(); }
+    if (_pi) cancelAnimationFrame(_pi);
+    _pi = requestAnimationFrame(playbackLoop);
+  } else { 
+    if (_pi) cancelAnimationFrame(_pi); 
+    _pi = null; 
+    pauseAudio(); 
+    updateTL(); // refresh full DOM on stop
+    fullRender();
+  }
 }
 
 // ==================== ZOOM & PAN ====================
@@ -5083,12 +5132,11 @@ function setupEvents() {
     S.fps = parseInt(e.target.value) || 12;
     if (S.fps < 1) S.fps = 1;
     if (S.fps > 120) S.fps = 120;
-    if (S.playing) { clearInterval(_pi); _pi = setInterval(() => {
-      if (S.frameIdx < S.frames.length - 1) S.frameIdx++;
-      else if (S.loop) S.frameIdx = 0;
-      else { play(); return; }
-      updateTL(); fullRender();
-    }, 1000 / S.fps); }
+    if (S.playing) {
+      _startFrameIdx = S.frameIdx;
+      _playbackStartTime = performance.now();
+      playAudioAtFrame(S.frameIdx, S.fps);
+    }
   };
   
   if ($('tl-fps-inline')) $('tl-fps-inline').onchange = e => {
@@ -5101,13 +5149,9 @@ function setupEvents() {
       if ($('fps-input')) $('fps-input').value = fps.toString();
       
       if (S.playing) { 
-        clearInterval(_pi); 
-        _pi = setInterval(() => {
-          if (S.frameIdx < S.frames.length - 1) S.frameIdx++;
-          else if (S.loop) S.frameIdx = 0;
-          else { play(); return; }
-          updateTL(); fullRender();
-        }, 1000 / S.fps); 
+        _startFrameIdx = S.frameIdx;
+        _playbackStartTime = performance.now();
+        playAudioAtFrame(S.frameIdx, S.fps);
       } else {
         updateTL();
       }

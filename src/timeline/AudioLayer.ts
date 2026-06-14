@@ -246,10 +246,14 @@ export function checkAudioFrame(frameIdx: number, fps: number) {
     const rawDur = Globals.bgAudio.duration || 0;
     const durFrames = Math.ceil(Math.max(0, rawDur - (Globals.bgAudioStartTrim || 0) - (Globals.bgAudioEndTrim || 0)) * fps);
     
-    if (frameIdx === Globals.bgAudioOffset) {
-        playAudioAtFrame(frameIdx, fps);
-    } else if (frameIdx === Globals.bgAudioOffset + durFrames) {
-        Globals.bgAudio.pause();
+    if (frameIdx >= Globals.bgAudioOffset && frameIdx < Globals.bgAudioOffset + durFrames) {
+        if (Globals.bgAudio.paused) {
+            playAudioAtFrame(frameIdx, fps);
+        }
+    } else {
+        if (!Globals.bgAudio.paused) {
+            Globals.bgAudio.pause();
+        }
     }
 }
 
