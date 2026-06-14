@@ -1068,14 +1068,19 @@ input[type="range"]:focus {
   background: #2d2d2d;
 }
 
-/* Extended frame & Keyframe (Active frames) - Light gray */
-.tl-frame-cell.extended, .tl-frame-cell.keyframe, .tl-frame-cell.blank-key {
-  background: #d4d4d4 !important;
+/* Extended frame & Filled Keyframe (Active frames) - Mid gray */
+.tl-frame-cell.extended, .tl-frame-cell.keyframe {
+  background: #8c8c8c !important;
+}
+
+/* Blank Keyframe - Light gray/Whiteish */
+.tl-frame-cell.blank-key {
+  background: #cccccc !important;
 }
 
 /* Tween frame */
 .tl-frame-cell.tween {
-  background: #a3c1e3 !important; /* Adobe blue tween */
+  background: #9b82cc !important; /* Adobe Purple tween */
 }
 
 /* Keyframe: solid tiny black dot */
