@@ -1894,7 +1894,7 @@ function doFill(c) {
   // 3. Flood fill using alpha mask as wall boundary
   const filled = new Uint8Array(w * h);
   const stack = [[sx, sy]];
-  const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  const dirs = [[1,0],[-1,0],[0,1],[0,-1]]; // 4-way fill to prevent diagonal leaking through anti-aliased corners
 
   let hitEdge = false;
   while (stack.length > 0) {
@@ -1916,8 +1916,8 @@ function doFill(c) {
   }
 
   // 4. Dilate to cover anti-aliased edge pixels (more passes = less gaps)
-  const DILATE_TOL = Math.min(250, WALL_TOL + 50);
-  for (let iter = 0; iter < 4; iter++) {
+  const DILATE_TOL = Math.min(250, Math.max(200, WALL_TOL + 50));
+  for (let iter = 0; iter < 6; iter++) {
     const tmpF = new Uint8Array(filled);
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
@@ -1945,15 +1945,13 @@ function doFill(c) {
 
   // The first ring is the outer boundary
   let outerPts = coords[0].map(p => ({ x: p[0], y: p[1] }));
-  outerPts = smoothPath(outerPts, 2);
-  outerPts = simplifyPath(outerPts, 0.2);
+  outerPts = simplifyPath(outerPts, 0.5);
 
   // Subsequent rings are holes
   const holes = [];
   for (let i = 1; i < coords.length; i++) {
     let holePts = coords[i].map(p => ({ x: p[0], y: p[1] }));
-    holePts = smoothPath(holePts, 2);
-    holePts = simplifyPath(holePts, 0.2);
+    holePts = simplifyPath(holePts, 0.5);
     if (holePts.length > 2) holes.push(holePts);
   }
 
