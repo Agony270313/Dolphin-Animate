@@ -1068,14 +1068,14 @@ input[type="range"]:focus {
   background: #2d2d2d;
 }
 
-/* Extended frame & Filled Keyframe (Active frames) - Mid gray */
+/* Extended frame & Filled Keyframe (Active frames) - Lighter */
 .tl-frame-cell.extended, .tl-frame-cell.keyframe {
-  background: #8c8c8c !important;
+  background: #cccccc !important;
 }
 
-/* Blank Keyframe - Light gray/Whiteish */
+/* Blank Keyframe - Darker/Blackish */
 .tl-frame-cell.blank-key {
-  background: #cccccc !important;
+  background: #666666 !important;
 }
 
 /* Tween frame */
