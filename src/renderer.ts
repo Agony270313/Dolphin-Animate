@@ -414,63 +414,6 @@ function renderFrame(c, fi, sc, noOnion) {
           ctx.restore();
         } else if (o.type === 'fillPath') {
           drawFillPathObj(ctx, o, baseAlpha);
-        } else if ((isGrp || isSym)) {
-          let children;
-          if (isSym) {
-            const sym = Symbols[o.symbolId];
-            if (sym.frames && sym.frames.length > 1) {
-              const symFi = fi % sym.frames.length;
-              children = sym.frames[symFi]?.children || sym.children;
-            } else {
-              children = sym.children;
-            }
-          } else {
-            children = o.children;
-          }
-          if (children) {
-            const renderGroupPass1 = (groupChildren) => {
-              for (const child of groupChildren) {
-                if (child.type === 'fill') {
-                  ctx.save();
-                  ctx.translate(child.x || 0, child.y || 0);
-                  drawFill(ctx, child.fc, child.opacity * baseAlpha);
-                  ctx.restore();
-                } else if (child.type === 'fillPath') {
-                  const hasTx = hasTransform(child) || child.angle;
-                  if (hasTx) {
-                    const m = getObjMatrix(child);
-                    ctx.save();
-                    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
-                  }
-                  drawFillPathObj(ctx, child, baseAlpha);
-                  if (hasTx) ctx.restore();
-                } else if (child.type === 'group') {
-                  const hasTx = hasTransform(child) || child.angle;
-                  if (hasTx) {
-                    const m = getObjMatrix(child);
-                    ctx.save();
-                    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
-                  }
-                  if (child.children) renderGroupPass1(child.children);
-                  if (hasTx) ctx.restore();
-                } else if (child.type === 'symbol') {
-                  const hasTx = hasTransform(child) || child.angle;
-                  if (hasTx) {
-                    const m = getObjMatrix(child);
-                    ctx.save();
-                    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
-                  }
-                  if (child.x || child.y) {
-                    if (!hasTx) ctx.save();
-                    ctx.translate(child.x || 0, child.y || 0);
-                  }
-                  if (Symbols[child.symbolId] && Symbols[child.symbolId].children) renderGroupPass1(Symbols[child.symbolId].children);
-                  if (hasTx || child.x || child.y) ctx.restore();
-                }
-              }
-            };
-            renderGroupPass1(children);
-          }
         }
         if (isSym && (o.x || o.y)) ctx.restore();
         if (hasTransform(o) || o.angle) ctx.restore();
@@ -536,9 +479,23 @@ function renderFrame(c, fi, sc, noOnion) {
             children = o.children;
           }
           if (children) {
-            const renderGroupPass2 = (groupChildren) => {
+            const renderGroupUnified = (groupChildren) => {
               for (const child of groupChildren) {
-                if (child.type === 'stroke') {
+                if (child.type === 'fill') {
+                  ctx.save();
+                  ctx.translate(child.x || 0, child.y || 0);
+                  drawFill(ctx, child.fc, child.opacity * baseAlpha);
+                  ctx.restore();
+                } else if (child.type === 'fillPath') {
+                  const hasTx = hasTransform(child) || child.angle;
+                  if (hasTx) {
+                    const m = getObjMatrix(child);
+                    ctx.save();
+                    ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+                  }
+                  drawFillPathObj(ctx, child, baseAlpha);
+                  if (hasTx) ctx.restore();
+                } else if (child.type === 'stroke') {
                   const hasTx = hasTransform(child) || child.angle;
                   if (hasTx) {
                     const m = getObjMatrix(child);
@@ -577,7 +534,7 @@ function renderFrame(c, fi, sc, noOnion) {
                     ctx.save();
                     ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
                   }
-                  if (child.children) renderGroupPass2(child.children);
+                  if (child.children) renderGroupUnified(child.children);
                   if (hasTx) ctx.restore();
                 } else if (child.type === 'symbol') {
                   const hasTx = hasTransform(child) || child.angle;
@@ -590,14 +547,14 @@ function renderFrame(c, fi, sc, noOnion) {
                     if (!hasTx) ctx.save();
                     ctx.translate(child.x || 0, child.y || 0);
                   }
-                  if (Symbols[child.symbolId] && Symbols[child.symbolId].children) renderGroupPass2(Symbols[child.symbolId].children);
+                  if (Symbols[child.symbolId] && Symbols[child.symbolId].children) renderGroupUnified(Symbols[child.symbolId].children);
                   if (hasTx || child.x || child.y) ctx.restore();
                 } else if (child.type !== 'fill' && child.type !== 'fillPath') {
                   drawShape(ctx, child.type, child.x1, child.y1, child.x2, child.y2, child.color, child.fillColor, child.size, child.opacity * baseAlpha);
                 }
               }
             };
-            renderGroupPass2(children);
+            renderGroupUnified(children);
           }
         }
         else if (o.type !== 'fill' && o.type !== 'fillPath') drawShape(ctx, o.type, o.x1, o.y1, o.x2, o.y2, o.color, o.fillColor, o.size, o.opacity * baseAlpha);
