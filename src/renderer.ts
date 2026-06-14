@@ -4321,7 +4321,7 @@ async function openProj(providedPath?: string): Promise<boolean> {
     if (S.activeLayerId != null) S.selLayerIds.add(S.activeLayerId);
     _selectedFrames.clear(); _tlRangeAnchor = -1; _penPath = null;
     dirtyCache(); S.tlDirty = true;
-    fullRender(); updateLayerUI(); saveSnapshot();
+    fullRender(); updateLayerUI(); centerZoom(); saveSnapshot();
     return true;
   } catch (err) { alert('Parse error: ' + err.message); return false; }
 }
@@ -4340,7 +4340,7 @@ function newProj(skipConfirm = false) {
   $('canvas-bg-color').value = '#ffffff';
   if ($('pan-bgimg-row')) $('pan-bgimg-row').style.display = 'none';
   dirtyCache(); S.tlDirty = true;
-  fullRender(); updateLayerUI(); saveSnapshot();
+  fullRender(); updateLayerUI(); centerZoom(); saveSnapshot();
 }
 
 // ==================== CONTEXT MENU ====================
