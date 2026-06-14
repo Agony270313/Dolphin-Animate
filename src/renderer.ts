@@ -3360,12 +3360,12 @@ function updateTL() {
 
       // Determine if this frame is extended (same content as previous)
       let isExtended = false;
-      if (!isKey && hasContent && i > 0) {
+      if (!isKey && f && i > 0) {
         const prevF = S.frames[i - 1];
         const prevObjs = prevF ? (prevF.o[l.id] || []) : [];
         const prevHash = prevObjs.length > 0 ? frameHashContent(prevObjs) : 'empty';
-        const currHash = frameHashContent(objs);
-        isExtended = prevHash !== 'empty' && currHash === prevHash;
+        const currHash = objs.length > 0 ? frameHashContent(objs) : 'empty';
+        isExtended = currHash === prevHash;
       }
 
       const cell = document.createElement('div');
@@ -3378,7 +3378,11 @@ function updateTL() {
       } else if (isKey && !hasContent) {
         cell.classList.add('blank-key');
       } else if (isExtended) {
-        cell.classList.add('extended');
+        if (hasContent) {
+          cell.classList.add('extended');
+        } else {
+          cell.classList.add('extended-blank');
+        }
       } else if (!isKey && hasContent) {
         // This is an interpolated tween frame
         cell.classList.add('tween');

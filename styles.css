@@ -1074,7 +1074,7 @@ input[type="range"]:focus {
 }
 
 /* Blank Keyframe - Darker/Blackish */
-.tl-frame-cell.blank-key {
+.tl-frame-cell.blank-key, .tl-frame-cell.extended-blank {
   background: #666666 !important;
 }
 
