@@ -6259,21 +6259,44 @@ function setupStartScreen() {
       const presetSec = document.querySelector('.ss-presets') as HTMLElement;
       const createTitle = document.querySelector('.ss-title') as HTMLElement;
       const recentSec = document.querySelector('.ss-recent-section') as HTMLElement;
+      const settingsSec = document.querySelector('.ss-settings-section') as HTMLElement;
       
       if (tab === 'recent') {
         if(presetSec) presetSec.style.display = 'none';
         if(customSec) customSec.style.display = 'none';
         if(createTitle) createTitle.style.display = 'none';
+        if(settingsSec) settingsSec.style.display = 'none';
         if(recentSec) recentSec.style.display = 'block';
         renderRecentProjects();
+      } else if (tab === 'settings') {
+        if(presetSec) presetSec.style.display = 'none';
+        if(customSec) customSec.style.display = 'none';
+        if(createTitle) createTitle.style.display = 'none';
+        if(recentSec) recentSec.style.display = 'none';
+        if(settingsSec) settingsSec.style.display = 'block';
       } else {
         if(presetSec) presetSec.style.display = 'grid';
         if(customSec) customSec.style.display = 'block';
         if(createTitle) createTitle.style.display = 'block';
         if(recentSec) recentSec.style.display = 'none';
+        if(settingsSec) settingsSec.style.display = 'none';
       }
     });
   });
+
+  const themeSelect = $('setting-timeline-theme') as HTMLSelectElement;
+  if (themeSelect) {
+    const currentTheme = localStorage.getItem('timelineTheme') || 'classic';
+    themeSelect.value = currentTheme;
+    document.body.classList.toggle('theme-adobe', currentTheme === 'adobe');
+    document.body.classList.toggle('theme-classic', currentTheme === 'classic');
+    
+    themeSelect.addEventListener('change', () => {
+      localStorage.setItem('timelineTheme', themeSelect.value);
+      document.body.classList.toggle('theme-adobe', themeSelect.value === 'adobe');
+      document.body.classList.toggle('theme-classic', themeSelect.value === 'classic');
+    });
+  }
 
   // Open button
   $('ss-open-btn').onclick = async () => {

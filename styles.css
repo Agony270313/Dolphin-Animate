@@ -1752,3 +1752,41 @@ input[type="range"]:focus {
 .ss-preset.active { border-color: #007acc; background-color: #252525; box-shadow: 0 0 10px rgba(0,122,204,0.3); transform: translateY(-2px); }
 
 .ss-recent-item { cursor: pointer; }
+/* ==================== CLASSIC THEME OVERRIDES ==================== */
+body.theme-classic .tl-layer-row.active { background: #1a3a5c; }
+body.theme-classic .tl-layer-row.active:hover { background: #1f4370; }
+
+body.theme-classic .tl-frame-cell {
+  border-right: 1px solid #5a5a5a !important;
+  background: #808080 !important;
+}
+body.theme-classic .tl-frame-cell.empty { background: #808080 !important; }
+body.theme-classic .tl-frame-cell.extended { background: #999999 !important; }
+body.theme-classic .tl-frame-cell.keyframe { background: #999999 !important; }
+body.theme-classic .tl-frame-cell.blank-key { background: #808080 !important; }
+body.theme-classic .tl-frame-cell.extended-blank { background: #808080 !important; }
+body.theme-classic .tl-frame-cell.tween { background: #808080 !important; }
+
+body.theme-classic .tl-frame-cell.keyframe::after {
+  width: 4px; height: 4px; background: #1a1a1a; border-radius: 50%; box-shadow: none; border: none;
+}
+body.theme-classic .tl-frame-cell.blank-key::after {
+  width: 4px; height: 4px; background: transparent; border: 1px solid #333; border-radius: 50%; box-shadow: none;
+}
+
+body.theme-classic .tl-frame-cell.active { background: #0078d7 !important; }
+body.theme-classic .tl-frame-cell.active.keyframe::after,
+body.theme-classic .tl-frame-cell.active.blank-key::after {
+  background: #fff; border-color: #fff;
+}
+
+body.theme-classic #tl-playhead {
+  width: 1px; background: #ff0000; margin-left: 0; top: 18px; bottom: 0; height: auto; border-radius: 0;
+}
+body.theme-classic #tl-playhead::before {
+  content: ''; position: absolute; top: -18px; left: -4px; width: 0; height: 0;
+  border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 6px solid #ff0000;
+  border-bottom: none; background: transparent; border-radius: 0; box-shadow: none;
+}
+
+body.theme-classic .tl-frame-cell.tween > div { display: none !important; }
