@@ -6005,20 +6005,19 @@ function setupStartScreen() {
   };
 
   // Presets
+  // Presets
   document.querySelectorAll('.ss-preset').forEach(el => {
     el.addEventListener('click', (e) => {
+      document.querySelectorAll('.ss-preset').forEach(p => p.classList.remove('active'));
       const p = e.currentTarget as HTMLElement;
+      p.classList.add('active');
       const w = parseInt(p.dataset.w || '1920');
       const h = parseInt(p.dataset.h || '1080');
       const fps = parseInt(p.dataset.fps || '24');
       
-      S.w = w; S.h = h; S.fps = fps;
-      if ($('canvas-width')) $('canvas-width').value = w.toString();
-      if ($('canvas-height')) $('canvas-height').value = h.toString();
-      if ($('fps-input')) $('fps-input').value = fps.toString();
-      
-      newProj(true); // create blank without confirming
-      startScreen.style.display = 'none';
+      if ($('ss-width')) ($('ss-width') as HTMLInputElement).value = w.toString();
+      if ($('ss-height')) ($('ss-height') as HTMLInputElement).value = h.toString();
+      if ($('ss-fps')) ($('ss-fps') as HTMLInputElement).value = fps.toString();
     });
   });
 
