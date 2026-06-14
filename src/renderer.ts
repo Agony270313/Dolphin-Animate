@@ -1998,14 +1998,52 @@ function doFill(c) {
     if (holePts.length > 2) holes.push(holePts);
   }
 
-  obs(S.frameIdx, l.id).push({
+  const fillObj = {
     uid: Math.random().toString(36).substr(2, 9),
     type: 'fillPath',
     pts: outerPts,
     holes: holes.length > 0 ? holes : undefined,
     color: S.stroke,
     opacity: S.opacity
-  });
+  };
+
+  const touchingStrokes = [];
+  const fillBb = getObjBounds(fillObj);
+  
+  for (let i = 0; i < objs.length; i++) {
+    const o = objs[i];
+    if (o.type === 'stroke') {
+      const b = getObjBounds(o);
+      if (b.x <= fillBb.x + fillBb.w && b.x + b.w >= fillBb.x && b.y <= fillBb.y + fillBb.h && b.y + b.h >= fillBb.y) {
+        let touches = false;
+        const ptsArr = o.subs && o.subs.length ? o.subs.map(s => s.pts) : (o.pts ? [o.pts] : []);
+        for (const pts of ptsArr) {
+          for (let j = 0; j < pts.length; j += Math.max(1, Math.floor(pts.length / 50))) {
+             if (pointInOrNearPolygon(pts[j], outerPts, 15)) { touches = true; break; }
+          }
+          if (touches) break;
+        }
+        if (touches) touchingStrokes.push(i);
+      }
+    }
+  }
+
+  if (touchingStrokes.length > 0) {
+    const children = [];
+    touchingStrokes.sort((a,b) => b - a);
+    for (const i of touchingStrokes) {
+      children.push(objs.splice(i, 1)[0]);
+    }
+    children.unshift(fillObj);
+    objs.push({
+      uid: Math.random().toString(36).substr(2, 9),
+      type: 'group',
+      children: children,
+      opacity: 1
+    });
+  } else {
+    objs.push(fillObj);
+  }
 
   dirtyCache();
   render();
