@@ -5580,7 +5580,7 @@ export function renderSymbolThumb(symId: string, size = 60): HTMLCanvasElement {
   const offX = padding + (availW - cw * scale) / 2 - minX * scale;
   const offY = padding + (availH - ch * scale) / 2 - minY * scale;
 
-  tctx.fillStyle = '#1a1a2e';
+  tctx.fillStyle = '#ffffff';
   tctx.fillRect(0, 0, size, size);
   tctx.save();
   tctx.translate(offX, offY);
@@ -5626,6 +5626,8 @@ export function renderSymbolThumb(symId: string, size = 60): HTMLCanvasElement {
             for (const sub of subs) drawStroke(tctx, sub.pts, sub.color || gc.color, sub.size !== undefined ? sub.size : gc.size, (sub.opacity !== undefined ? sub.opacity : gc.opacity) || 1, 'source-over');
           } else if (gc.type === 'fill' && gc.fc) {
             tctx.save(); tctx.translate(gc.x || 0, gc.y || 0); tctx.drawImage(gc.fc, 0, 0); tctx.restore();
+          } else if (gc.type === 'fillPath') {
+            drawFillPathObj(tctx, gc, 1);
           } else if (gc.type !== 'fill' && gc.type !== 'fillPath' && gc.x1 != null) {
             drawShape(tctx, gc.type, gc.x1, gc.y1, gc.x2, gc.y2, gc.color, gc.fillColor, gc.size, gc.opacity || 1);
           } else if (gc.type === 'group' && gc.children) {
@@ -5636,6 +5638,7 @@ export function renderSymbolThumb(symId: string, size = 60): HTMLCanvasElement {
       drawGroupThumb(child.children);
     }
   }
+
   tctx.restore();
 
   // Border
