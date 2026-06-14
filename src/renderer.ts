@@ -4196,14 +4196,14 @@ async function saveProj() {
   if (!r.success) alert('Save failed: ' + r.error);
 }
 
-async function openProj(providedPath?: string) {
+async function openProj(providedPath?: string): Promise<boolean> {
   let fp = providedPath;
   if (!fp || typeof fp !== 'string') {
     fp = await ipcRenderer.invoke('open-file', { filters: [{ name: 'Yunus Project', extensions: ['yunus'] }] });
   }
-  if (!fp) return;
+  if (!fp) return false;
   const json = await ipcRenderer.invoke('read-file', fp);
-  if (!json) { alert('Read failed'); return; }
+  if (!json) { alert('Read failed'); return false; }
   
   // Add to recent projects
   try {
@@ -4322,7 +4322,8 @@ async function openProj(providedPath?: string) {
     _selectedFrames.clear(); _tlRangeAnchor = -1; _penPath = null;
     dirtyCache(); S.tlDirty = true;
     fullRender(); updateLayerUI(); saveSnapshot();
-  } catch (err) { alert('Parse error: ' + err.message); }
+    return true;
+  } catch (err) { alert('Parse error: ' + err.message); return false; }
 }
 
 function newProj(skipConfirm = false) {
@@ -5951,9 +5952,11 @@ function renderRecentProjects() {
         </div>
       `;
       item.onclick = async () => {
-        const startScreen = $('start-screen');
-        if (startScreen) startScreen.style.display = 'none';
-        await openProj(p.path);
+        const success = await openProj(p.path);
+        if (success) {
+          const startScreen = $('start-screen');
+          if (startScreen) startScreen.style.display = 'none';
+        }
       };
       list.appendChild(item);
     });
@@ -5997,8 +6000,8 @@ function setupStartScreen() {
 
   // Open button
   $('ss-open-btn').onclick = async () => {
-    await openProj();
-    startScreen.style.display = 'none';
+    const success = await openProj();
+    if (success) startScreen.style.display = 'none';
   };
 
   // Presets
