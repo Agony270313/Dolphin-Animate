@@ -1283,7 +1283,9 @@ function endDraw(e) {
             if (distToSegment(px, py, eraserPtsWorld[j].x, eraserPtsWorld[j].y, eraserPtsWorld[j+1].x, eraserPtsWorld[j+1].y) <= r2) return true;
           }
           return false;
-           function performErasure(objList, parentEraserPts, parentEraserSize) {
+        }
+
+        function performErasure(objList, parentEraserPts, parentEraserSize) {
           let erasedSomething = false;
           for (let i = objList.length - 1; i >= 0; i--) {
             const o = objList[i];
@@ -1811,45 +1813,102 @@ function doFill(c) {
   const tpWorld = { x: c.x, y: c.y };
   const objs = obs(S.frameIdx, l.id);
   
-  // Vector-aware fill: Check if we clicked inside a shape/fill on the current layer
-  for (let i = objs.length - 1; i >= 0; i--) {
-    const o = objs[i];
-    const m = hasTransform(o) ? getObjMatrix(o) : null;
-    const tp = m ? inverseTransformPoint(tpWorld, m) : tpWorld;
+  // Vector-aware fill: Check if we clicked inside a shape/fill or exactly on a stroke
+  function checkVectorFill(objList, currentTp) {
+    for (let i = objList.length - 1; i >= 0; i--) {
+      const o = objList[i];
+      const m = hasTransform(o) ? getObjMatrix(o) : null;
+      const tp = m ? inverseTransformPoint(currentTp, m) : currentTp;
 
-    if (o.type === 'circle') {
-      const cx = (o.x1 + o.x2) / 2, cy = (o.y1 + o.y2) / 2;
-      const rx = Math.abs(o.x2 - o.x1) / 2, ry = Math.abs(o.y2 - o.y1) / 2;
-      if (rx > 0 && ry > 0) {
-        const d = ((tp.x - cx) / rx) ** 2 + ((tp.y - cy) / ry) ** 2;
-        if (d <= 1) {
+      if (o.type === 'group' && o.children) {
+        if (checkVectorFill(o.children, tp)) return true;
+        continue;
+      }
+      if (o.type === 'symbol' && o.symbolId) {
+        const sym = Symbols[o.symbolId];
+        if (sym && sym.children) {
+          let symTp = tp;
+          if (o.x || o.y) symTp = { x: tp.x - (o.x || 0), y: tp.y - (o.y || 0) };
+          if (checkVectorFill(sym.children, symTp)) return true;
+        }
+        continue;
+      }
+
+      if (o.type === 'circle') {
+        const cx = (o.x1 + o.x2) / 2, cy = (o.y1 + o.y2) / 2;
+        const rx = Math.abs(o.x2 - o.x1) / 2, ry = Math.abs(o.y2 - o.y1) / 2;
+        if (rx > 0 && ry > 0) {
+          const d = ((tp.x - cx) / rx) ** 2 + ((tp.y - cy) / ry) ** 2;
+          // Click exactly on the stroke
+          if (Math.abs(d - 1) < 0.2) {
+            o.color = S.stroke;
+            dirtyCache(); render(); saveSnapshot();
+            return true;
+          }
+          // Click inside the circle
+          if (d <= 1) {
+            o.fillColor = S.stroke;
+            dirtyCache(); render(); saveSnapshot();
+            return true;
+          }
+        }
+      } else if (o.type === 'rect') {
+        const tol = (o.size || 0) / 2 + 3;
+        const x1 = Math.min(o.x1, o.x2), x2 = Math.max(o.x1, o.x2);
+        const y1 = Math.min(o.y1, o.y2), y2 = Math.max(o.y1, o.y2);
+        // Check if click is on the edge (stroke)
+        const onEdge = (Math.abs(tp.x - x1) < tol || Math.abs(tp.x - x2) < tol || Math.abs(tp.y - y1) < tol || Math.abs(tp.y - y2) < tol) && tp.x >= x1 - tol && tp.x <= x2 + tol && tp.y >= y1 - tol && tp.y <= y2 + tol;
+        if (onEdge) {
+          o.color = S.stroke;
+          dirtyCache(); render(); saveSnapshot();
+          return true;
+        }
+        // Click inside the rect
+        if (tp.x >= x1 && tp.x <= x2 && tp.y >= y1 && tp.y <= y2) {
           o.fillColor = S.stroke;
           dirtyCache(); render(); saveSnapshot();
-          return;
+          return true;
         }
-      }
-    } else if (o.type === 'rect') {
-      const x1 = Math.min(o.x1, o.x2), x2 = Math.max(o.x1, o.x2);
-      const y1 = Math.min(o.y1, o.y2), y2 = Math.max(o.y1, o.y2);
-      if (tp.x >= x1 && tp.x <= x2 && tp.y >= y1 && tp.y <= y2) {
-        o.fillColor = S.stroke;
-        dirtyCache(); render(); saveSnapshot();
-        return;
-      }
-    } else if (o.type === 'fillPath' && o.pts) {
-      let inside = pointInPolygon(tp, o.pts);
-      if (inside && o.holes) {
-        for (const hole of o.holes) {
-          if (pointInPolygon(tp, hole)) { inside = false; break; }
+      } else if (o.type === 'fillPath' && o.pts) {
+        let inside = pointInPolygon(tp, o.pts);
+        if (inside && o.holes) {
+          for (const hole of o.holes) {
+            if (pointInPolygon(tp, hole)) { inside = false; break; }
+          }
         }
-      }
-      if (inside) {
-        o.color = S.stroke;
-        dirtyCache(); render(); saveSnapshot();
-        return;
+        if (inside) {
+          o.color = S.stroke;
+          dirtyCache(); render(); saveSnapshot();
+          return true;
+        }
+      } else if (o.type === 'stroke') {
+        const ptsArr = o.subs && o.subs.length ? o.subs.map(s => s.pts) : (o.pts ? [o.pts] : []);
+        let hit = false;
+        for (const pts of ptsArr) {
+          for (let j = 0; j < pts.length - 1; j++) {
+            const dx = pts[j + 1].x - pts[j].x;
+            const dy = pts[j + 1].y - pts[j].y;
+            const len = dx * dx + dy * dy;
+            if (len === 0) { if (Math.abs(tp.x - pts[j].x) + Math.abs(tp.y - pts[j].y) < 8) { hit = true; break; } continue; }
+            let t = ((tp.x - pts[j].x) * dx + (tp.y - pts[j].y) * dy) / len;
+            t = Math.max(0, Math.min(1, t));
+            const cx = pts[j].x + t * dx;
+            const cy = pts[j].y + t * dy;
+            if ((tp.x - cx) ** 2 + (tp.y - cy) ** 2 < 64) { hit = true; break; }
+          }
+          if (hit) break;
+        }
+        if (hit) {
+          o.color = S.stroke;
+          dirtyCache(); render(); saveSnapshot();
+          return true;
+        }
       }
     }
+    return false;
   }
+  
+  if (checkVectorFill(objs, tpWorld)) return;
 
   // 1. Render strokes/shapes to a transparent canvas (NO background)
   const wall = document.createElement('canvas');
@@ -1860,58 +1919,89 @@ function doFill(c) {
     if (!layer.vis) continue;
     const f = S.frames[S.frameIdx];
     if (!f) continue;
-    for (const o of (f.o[layer.id] || [])) {
-      if (o.type === 'stroke') {
-        const subs = o.subs && o.subs.length ? o.subs : (o.pts ? [{ pts: o.pts, size: o.size, color: o.color, opacity: o.opacity }] : []);
-        for (const sub of subs) {
-          const sz = sub.size !== undefined ? sub.size : o.size;
-          drawStroke(wc, sub.pts, sub.color || o.color, sz, 1, 'source-over');
-        }
-      } else if (o.type === 'rect' || o.type === 'circle' || o.type === 'line') {
-        drawShape(wc, o.type, o.x1, o.y1, o.x2, o.y2, o.color, o.fillColor, o.size, 1);
-      } else if (o.type === 'fillPath' && o.pts && o.pts.length > 2) {
-        wc.save();
-        wc.fillStyle = o.color;
-        wc.globalAlpha = o.opacity;
-        wc.beginPath();
-        wc.moveTo(o.pts[0].x, o.pts[0].y);
-        for (let i = 1; i < o.pts.length; i++) wc.lineTo(o.pts[i].x, o.pts[i].y);
-        wc.closePath();
-        wc.fill();
-        wc.lineWidth = 1.5;
-        wc.strokeStyle = o.color;
-        wc.stroke();
-        wc.restore();
-      } else if (o.type === 'fill' && o.fc) {
-        wc.save();
-        wc.globalAlpha = o.opacity;
-        if (o.erasers && o.erasers.length > 0) {
-          const tmpCv = document.createElement('canvas');
-          tmpCv.width = o.fc.width; tmpCv.height = o.fc.height;
-          const tmpCtx = tmpCv.getContext('2d');
-          tmpCtx.drawImage(o.fc, 0, 0);
-          tmpCtx.globalCompositeOperation = 'destination-out';
-          tmpCtx.lineCap = 'round';
-          tmpCtx.lineJoin = 'round';
-          const fox2 = o.x || 0, foy2 = o.y || 0;
-          for (const er of o.erasers) {
-            tmpCtx.lineWidth = er.size;
-            tmpCtx.beginPath();
-            if (er.pts.length > 0) {
-              tmpCtx.moveTo(er.pts[0].x - fox2, er.pts[0].y - foy2);
-              for (let i = 1; i < er.pts.length; i++) tmpCtx.lineTo(er.pts[i].x - fox2, er.pts[i].y - foy2);
-              tmpCtx.stroke();
-            }
+
+    function renderWallObjs(objList, parentOpacity = 1) {
+      for (const o of objList) {
+        const opacity = (o.opacity !== undefined ? o.opacity : 1) * parentOpacity;
+        if (o.type === 'stroke') {
+          const subs = o.subs && o.subs.length ? o.subs : (o.pts ? [{ pts: o.pts, size: o.size, color: o.color, opacity }] : []);
+          for (const sub of subs) {
+            const sz = sub.size !== undefined ? sub.size : o.size;
+            drawStroke(wc, sub.pts, sub.color || o.color, sz, 1, 'source-over');
           }
-          wc.drawImage(tmpCv, o.x || 0, o.y || 0);
-        } else {
-          wc.drawImage(o.fc, o.x || 0, o.y || 0);
+        } else if (o.type === 'rect' || o.type === 'circle' || o.type === 'line') {
+          drawShape(wc, o.type, o.x1, o.y1, o.x2, o.y2, o.color, o.fillColor, o.size, opacity);
+        } else if (o.type === 'fillPath' && o.pts && o.pts.length > 2) {
+          wc.save();
+          wc.fillStyle = o.color;
+          wc.globalAlpha = opacity;
+          wc.beginPath();
+          wc.moveTo(o.pts[0].x, o.pts[0].y);
+          for (let i = 1; i < o.pts.length; i++) wc.lineTo(o.pts[i].x, o.pts[i].y);
+          wc.closePath();
+          wc.fill();
+          wc.lineWidth = 1.5;
+          wc.strokeStyle = o.color;
+          wc.stroke();
+          wc.restore();
+        } else if (o.type === 'fill' && o.fc) {
+          wc.save();
+          wc.globalAlpha = opacity;
+          if (o.erasers && o.erasers.length > 0) {
+            const tmpCv = document.createElement('canvas');
+            tmpCv.width = o.fc.width; tmpCv.height = o.fc.height;
+            const tmpCtx = tmpCv.getContext('2d');
+            tmpCtx.drawImage(o.fc, 0, 0);
+            tmpCtx.globalCompositeOperation = 'destination-out';
+            tmpCtx.lineCap = 'round';
+            tmpCtx.lineJoin = 'round';
+            const fox2 = o.x || 0, foy2 = o.y || 0;
+            for (const er of o.erasers) {
+              tmpCtx.lineWidth = er.size;
+              tmpCtx.beginPath();
+              if (er.pts.length > 0) {
+                tmpCtx.moveTo(er.pts[0].x - fox2, er.pts[0].y - foy2);
+                for (let i = 1; i < er.pts.length; i++) tmpCtx.lineTo(er.pts[i].x - fox2, er.pts[i].y - foy2);
+                tmpCtx.stroke();
+              }
+            }
+            wc.drawImage(tmpCv, o.x || 0, o.y || 0);
+          } else {
+            wc.drawImage(o.fc, o.x || 0, o.y || 0);
+          }
+          wc.restore();
+        } else if (o.type === 'pen' && o.pts) {
+          drawStroke(wc, o.pts, o.color, o.size, 1, 'source-over');
+        } else if (o.type === 'group' && o.children) {
+          const hasTx = hasTransform(o) || o.angle;
+          if (hasTx) {
+            const m = getObjMatrix(o);
+            wc.save();
+            wc.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+          }
+          renderWallObjs(o.children, opacity);
+          if (hasTx) wc.restore();
+        } else if (o.type === 'symbol') {
+          const sym = Symbols[o.symbolId];
+          if (sym && sym.children) {
+            const hasTx = hasTransform(o) || o.angle;
+            if (hasTx) {
+              const m = getObjMatrix(o);
+              wc.save();
+              wc.transform(m.a, m.b, m.c, m.d, m.e, m.f);
+            }
+            if (o.x || o.y) {
+              if (!hasTx) wc.save();
+              wc.translate(o.x || 0, o.y || 0);
+            }
+            renderWallObjs(sym.children, opacity);
+            if (hasTx || o.x || o.y) wc.restore();
+          }
         }
-        wc.restore();
-      } else if (o.type === 'pen' && o.pts) {
-        drawStroke(wc, o.pts, o.color, o.size, 1, 'source-over');
       }
     }
+    
+    renderWallObjs(f.o[layer.id] || []);
   }
 
   // 2. Extract pixel data
