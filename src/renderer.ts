@@ -5207,8 +5207,8 @@ function setupEvents() {
 
   $('stroke-color').oninput = e => { S.stroke = e.target.value; $('stroke-swatch').style.background = e.target.value; if ($('pan-stroke-color')) $('pan-stroke-color').value = e.target.value; };
   $('fill-color').oninput = e => { S.fill = e.target.value; $('fill-swatch').style.background = e.target.value; if ($('pan-fill-color')) $('pan-fill-color').value = e.target.value; };
-  $('stroke-swatch').onclick = () => $('stroke-color').click();
-  $('fill-swatch').onclick = () => $('fill-color').click();
+  $('stroke-swatch').onclick = () => { try { ($('stroke-color') as any).showPicker(); } catch(e) { $('stroke-color').click(); } };
+  $('fill-swatch').onclick = () => { try { ($('fill-color') as any).showPicker(); } catch(e) { $('fill-color').click(); } };
   $('brush-size').oninput = e => { S.size = parseInt(e.target.value); $('brush-size-label').textContent = e.target.value; };
   $('opacity').oninput = e => S.opacity = parseInt(e.target.value) / 100;
   if ($('smoothing')) $('smoothing').oninput = e => { 
