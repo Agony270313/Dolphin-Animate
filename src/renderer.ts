@@ -5745,6 +5745,7 @@ function setupEvents() {
     }
 
     const k = e.key;
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(k)) {
       if (S.selObjs.length > 0) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
