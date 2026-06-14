@@ -2335,7 +2335,17 @@ function hitTest(p) {
             if (hit) break;
           }
           if (hit) return { layerId: l.id, idx: i };
-        } else if (o.type === 'fill' || o.type === 'fillPath') {
+        } else if (o.type === 'fillPath') {
+          if (o.pts) {
+            let inside = pointInPolygon(tp, o.pts);
+            if (inside && o.holes) {
+              for (const hole of o.holes) {
+                if (pointInPolygon(tp, hole)) { inside = false; break; }
+              }
+            }
+            if (inside) return { layerId: l.id, idx: i };
+          }
+        } else if (o.type === 'fill') {
           return { layerId: l.id, idx: i };
         } else if (o.type === 'rect') {
           const tol = (o.size || 0) / 2 + 3;
