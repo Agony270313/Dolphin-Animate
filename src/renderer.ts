@@ -13,6 +13,7 @@ import { S, Globals, Symbols, IsolationMode, setIsolationMode } from './core/Sta
 import { initAudioUI, renderAudioTimeline, playAudioAtFrame, pauseAudio, loopAudioPlay, checkAudioFrame } from './timeline/AudioLayer';
 
 export let savedState: any = null;
+export let currentProjectPath: string | null = null;
 
 export function enterIsolationMode(symbolId: string, instanceRef?: {layerId: string, idx: number}) {
   if (IsolationMode) return;
@@ -4189,9 +4190,14 @@ function serialize() {
   return JSON.stringify(d);
 }
 
-async function saveProj(): Promise<boolean> {
-  const fp = await ipcRenderer.invoke('save-file', { defaultName: 'project.yunus', filters: [{ name: 'Yunus Project', extensions: ['yunus'] }] });
+async function saveProj(saveAs: boolean | Event = false): Promise<boolean> {
+  const isSaveAs = saveAs === true;
+  let fp = currentProjectPath;
+  if (!fp || isSaveAs) {
+    fp = await ipcRenderer.invoke('save-file', { defaultName: 'project.yunus', filters: [{ name: 'Yunus Project', extensions: ['yunus'] }] });
+  }
   if (!fp) return false;
+  currentProjectPath = fp;
   const r = await ipcRenderer.invoke('write-file', { filePath: fp, data: serialize() });
   if (!r.success) {
     alert('Save failed: ' + r.error);
@@ -4214,6 +4220,7 @@ async function openProj(providedPath?: string): Promise<boolean> {
     fp = await ipcRenderer.invoke('open-file', { filters: [{ name: 'Yunus Project', extensions: ['yunus'] }] });
   }
   if (!fp) return false;
+  currentProjectPath = fp;
   const json = await ipcRenderer.invoke('read-file', fp);
   if (!json) { alert('Read failed'); return false; }
   
@@ -4340,6 +4347,7 @@ async function openProj(providedPath?: string): Promise<boolean> {
 
 function newProj(skipConfirm = false) {
   if (!skipConfirm && !confirm('Are you sure you want to discard the current project?')) return;
+  currentProjectPath = null;
   S.layers = [mkLayer('Layer 1')]; S.layerIdx = 0;
   syncActiveLayer();
   S.selLayerIds.clear();
@@ -5340,14 +5348,18 @@ function setupEvents() {
       e.preventDefault(); play(); return;
     }
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    
+    // Top Bar shortcuts
+    if (e.ctrlKey && e.key.toLowerCase() === 'n') { e.preventDefault(); $('new-project').click(); return; }
+    if (e.ctrlKey && e.key.toLowerCase() === 'o') { e.preventDefault(); $('open-project').click(); return; }
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); saveProj(true); return; }
+    if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); $('save-project').click(); return; }
+    
     const k = e.key;
     if (S.playing) return;
     if (e.ctrlKey) {
       if (k === 'z') { e.preventDefault(); undo(); return; }
       if (k === 'y') { e.preventDefault(); redo(); return; }
-      if (k === 'n') { e.preventDefault(); $('new-project').click(); return; }
-      if (k === 'o') { e.preventDefault(); $('open-project').click(); return; }
-      if (k === 's') { e.preventDefault(); $('save-project').click(); return; }
       if (k === '0') { e.preventDefault(); centerZoom(); return; }
       if (k === '=') { e.preventDefault(); zoomAt(1); return; }
       if (k === '-') { e.preventDefault(); zoomAt(-1); return; }
