@@ -1283,146 +1283,139 @@ function endDraw(e) {
             if (distToSegment(px, py, eraserPtsWorld[j].x, eraserPtsWorld[j].y, eraserPtsWorld[j+1].x, eraserPtsWorld[j+1].y) <= r2) return true;
           }
           return false;
-        }
-
-        for (let i = objs.length - 1; i >= 0; i--) {
-          const o = objs[i];
-
-          if (o.type === 'fill') {
-            if (!o.fc) continue;
-            const fx = o.x || 0, fy = o.y || 0;
-            const fctx = o.fc.getContext('2d');
-            fctx.save();
-            fctx.globalCompositeOperation = 'destination-out';
-            fctx.lineCap = 'round';
-            fctx.lineJoin = 'round';
-            fctx.lineWidth = eraserSizeWorld;
-            fctx.beginPath();
-            let hasValid = false;
-            for (const ep of eraserPtsWorld) {
-              const lx = ep.x - fx, ly = ep.y - fy;
-              if (!hasValid) { fctx.moveTo(lx, ly); hasValid = true; }
-              else { fctx.lineTo(lx, ly); }
-            }
-            if (hasValid) fctx.stroke();
-            fctx.restore();
-            const idata = fctx.getImageData(0, 0, o.fc.width, o.fc.height).data;
-            let hasVisible = false;
-            for (let pi = 3; pi < idata.length; pi += 4) { if (idata[pi] > 0) { hasVisible = true; break; } }
-            if (!hasVisible) { objs.splice(i, 1); erasedAny = true; }
-            continue;
-          }
-
-          if (o.type === 'fillPath') {
-            let localEraserPts = eraserPtsWorld;
-            let localEraserSize = eraserSizeWorld;
+           function performErasure(objList, parentEraserPts, parentEraserSize) {
+          let erasedSomething = false;
+          for (let i = objList.length - 1; i >= 0; i--) {
+            const o = objList[i];
+            
+            let localEraserPts = parentEraserPts;
+            let localEraserSize = parentEraserSize;
             if (hasTransform(o)) {
               const m = getObjMatrix(o);
               const inv = invertMatrix(m);
               if (inv) {
-                localEraserPts = eraserPtsWorld.map(ep => ({ x: inv.a * ep.x + inv.c * ep.y + inv.e, y: inv.b * ep.x + inv.d * ep.y + inv.f }));
+                localEraserPts = parentEraserPts.map(ep => ({ x: inv.a * ep.x + inv.c * ep.y + inv.e, y: inv.b * ep.x + inv.d * ep.y + inv.f }));
                 const scaleX = Math.sqrt(m.a * m.a + m.b * m.b);
                 const scaleY = Math.sqrt(m.c * m.c + m.d * m.d);
-                localEraserSize = eraserSizeWorld / Math.max(scaleX, scaleY, 0.001);
-              }
-            }
-            
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-            for (const p of o.pts) { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; }
-            const pad = localEraserSize + 5;
-            
-            let hit = false;
-            for (const ep of localEraserPts) {
-              if (ep.x >= minX - pad && ep.x <= maxX + pad && ep.y >= minY - pad && ep.y <= maxY + pad) {
-                hit = true; break;
-              }
-            }
-            if (!hit) continue;
-            
-            if (!o.erasers) o.erasers = [];
-            o.erasers.push({ pts: localEraserPts, size: localEraserSize });
-            erasedAny = true;
-            continue;
-          }
-
-          if (o.type !== 'stroke' || o.composite === 'destination-out') continue;
-
-          let localEraserPts = eraserPtsWorld;
-          let localEraserSize = eraserSizeWorld;
-          if (hasTransform(o)) {
-            const m = getObjMatrix(o);
-            const inv = invertMatrix(m);
-            if (inv) {
-              localEraserPts = eraserPtsWorld.map(ep => ({ x: inv.a * ep.x + inv.c * ep.y + inv.e, y: inv.b * ep.x + inv.d * ep.y + inv.f }));
-              const scaleX = Math.sqrt(m.a * m.a + m.b * m.b);
-              const scaleY = Math.sqrt(m.c * m.c + m.d * m.d);
-              localEraserSize = eraserSizeWorld / Math.max(scaleX, scaleY, 0.001);
-            }
-          }
-
-          const subStrokes = (o.subs && o.subs.length) ? o.subs.map(s => s.pts) : (o.pts ? [o.pts] : []);
-          const finalSegments = [];
-          let objectErased = false;
-
-          for (const rawPts of subStrokes) {
-            const strokePts = densifyPath(rawPts, 1); // Densify to 1px resolution for high precision
-            const marked = new Uint8Array(strokePts.length);
-            let subErased = false;
-            
-            for (let pi = 0; pi < strokePts.length; pi++) {
-              const pt = strokePts[pi];
-              // Calculate dynamic collision radius based on pressure for accurate hit detection
-              const ptRadius = ((o.size || 0) / 2) * (pt.p !== undefined ? pt.p : 1);
-              for (let ej = 0; ej < localEraserPts.length - 1; ej++) {
-                const ep = localEraserPts[ej];
-                const eraserPtRadius = (localEraserSize / 2) * (ep.p !== undefined ? ep.p : 1);
-                const collisionRadius = eraserPtRadius + ptRadius;
-                const eR2 = collisionRadius * collisionRadius;
-
-                if (distToSegment(pt.x, pt.y, ep.x, ep.y, localEraserPts[ej+1].x, localEraserPts[ej+1].y) <= eR2) {
-                  marked[pi] = 1; 
-                  subErased = true;
-                  objectErased = true;
-                  break;
-                }
+                localEraserSize = parentEraserSize / Math.max(scaleX, scaleY, 0.001);
               }
             }
 
-            if (!subErased) {
-              finalSegments.push(rawPts); // Keep original untouched sub-stroke perfectly intact
+            if (o.type === 'group') {
+              if (performErasure(o.children, localEraserPts, localEraserSize)) erasedSomething = true;
+              if (o.children.length === 0) { objList.splice(i, 1); erasedSomething = true; }
               continue;
             }
 
-            let seg = [];
-            for (let pi = 0; pi < strokePts.length; pi++) {
-              if (marked[pi]) {
-                if (seg.length >= 2) finalSegments.push(simplifyPath(seg, 0.2)); // Re-simplify the surviving chunks with high accuracy
-                else if (seg.length === 1) finalSegments.push(seg); // Preserve dots
-                seg = [];
-              } else {
-                seg.push({ ...strokePts[pi] });
+            if (o.type === 'fill') {
+              if (!o.fc) continue;
+              const fx = o.x || 0, fy = o.y || 0;
+              const fctx = o.fc.getContext('2d');
+              fctx.save();
+              fctx.globalCompositeOperation = 'destination-out';
+              fctx.lineCap = 'round';
+              fctx.lineJoin = 'round';
+              fctx.lineWidth = localEraserSize;
+              fctx.beginPath();
+              let hasValid = false;
+              for (const ep of localEraserPts) {
+                const lx = ep.x - fx, ly = ep.y - fy;
+                if (!hasValid) { fctx.moveTo(lx, ly); hasValid = true; }
+                else { fctx.lineTo(lx, ly); }
               }
+              if (hasValid) fctx.stroke();
+              fctx.restore();
+              const idata = fctx.getImageData(0, 0, o.fc.width, o.fc.height).data;
+              let hasVisible = false;
+              for (let pi = 3; pi < idata.length; pi += 4) { if (idata[pi] > 0) { hasVisible = true; break; } }
+              if (!hasVisible) { objList.splice(i, 1); erasedSomething = true; }
+              continue;
             }
-            if (seg.length >= 2) finalSegments.push(simplifyPath(seg, 0.2));
-            else if (seg.length === 1) finalSegments.push(seg);
+
+            if (o.type === 'fillPath') {
+              let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+              for (const p of o.pts) { if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; if (p.x > maxX) maxX = p.x; if (p.y > maxY) maxY = p.y; }
+              const pad = localEraserSize + 5;
+              let hit = false;
+              for (const ep of localEraserPts) {
+                if (ep.x >= minX - pad && ep.x <= maxX + pad && ep.y >= minY - pad && ep.y <= maxY + pad) {
+                  hit = true; break;
+                }
+              }
+              if (!hit) continue;
+              if (!o.erasers) o.erasers = [];
+              o.erasers.push({ pts: localEraserPts, size: localEraserSize });
+              erasedSomething = true;
+              continue;
+            }
+
+            if (o.type !== 'stroke' || o.composite === 'destination-out') continue;
+
+            const subStrokes = (o.subs && o.subs.length) ? o.subs.map(s => s.pts) : (o.pts ? [o.pts] : []);
+            const finalSegments = [];
+            let objectErased = false;
+
+            for (const rawPts of subStrokes) {
+              const strokePts = densifyPath(rawPts, 1);
+              const marked = new Uint8Array(strokePts.length);
+              let subErased = false;
+              
+              for (let pi = 0; pi < strokePts.length; pi++) {
+                const pt = strokePts[pi];
+                const ptRadius = ((o.size || 0) / 2) * (pt.p !== undefined ? pt.p : 1);
+                for (let ej = 0; ej < localEraserPts.length - 1; ej++) {
+                  const ep = localEraserPts[ej];
+                  const eraserPtRadius = (localEraserSize / 2) * (ep.p !== undefined ? ep.p : 1);
+                  const collisionRadius = eraserPtRadius + ptRadius;
+                  const eR2 = collisionRadius * collisionRadius;
+                  if (distToSegment(pt.x, pt.y, ep.x, ep.y, localEraserPts[ej+1].x, localEraserPts[ej+1].y) <= eR2) {
+                    marked[pi] = 1; 
+                    subErased = true;
+                    objectErased = true;
+                    break;
+                  }
+                }
+              }
+
+              if (!subErased) {
+                finalSegments.push(rawPts);
+                continue;
+              }
+
+              let seg = [];
+              for (let pi = 0; pi < strokePts.length; pi++) {
+                if (marked[pi]) {
+                  if (seg.length >= 2) finalSegments.push(simplifyPath(seg, 0.2));
+                  else if (seg.length === 1) finalSegments.push(seg);
+                  seg = [];
+                } else {
+                  seg.push({ ...strokePts[pi] });
+                }
+              }
+              if (seg.length >= 2) finalSegments.push(simplifyPath(seg, 0.2));
+              else if (seg.length === 1) finalSegments.push(seg);
+            }
+
+            if (!objectErased) continue;
+            
+            objList.splice(i, 1);
+            erasedSomething = true;
+            for (let segI = finalSegments.length - 1; segI >= 0; segI--) {
+              objList.splice(i, 0, {
+                type: 'stroke',
+                pts: finalSegments[segI],
+                color: o.color,
+                size: o.size,
+                opacity: o.opacity,
+                composite: o.composite || 'source-over',
+              });
+            }
           }
+          return erasedSomething;
+        }
 
-          if (!objectErased) continue; // Skip replacement if this object wasn't touched at all
-
-          const idx = objs.indexOf(o);
-          if (idx < 0) continue;
-          objs.splice(idx, 1);
+        if (performErasure(objs, eraserPtsWorld, eraserSizeWorld)) {
           erasedAny = true;
-          for (const segPts of finalSegments) {
-            objs.splice(idx, 0, {
-              type: 'stroke',
-              pts: segPts,
-              color: o.color,
-              size: o.size,
-              opacity: o.opacity,
-              composite: o.composite || 'source-over',
-            });
-          }
         }
         if (erasedAny && S.selObjs.length) clearSel();
       } else {
