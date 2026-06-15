@@ -326,7 +326,7 @@ function mkLayer(name) {
 
 // ---- Vector draw primitives ----
 function drawStroke(c, pts, color, size, opacity, composite) {
-  if (!pts || !pts.length) return;
+  if (!pts || pts.length < 2) return;
   c.save();
   c.globalAlpha = opacity;
   c.globalCompositeOperation = composite || 'source-over';
@@ -334,6 +334,32 @@ function drawStroke(c, pts, color, size, opacity, composite) {
   c.lineWidth = size;
   c.lineCap = 'round';
   c.lineJoin = 'round';
+  
+  c.beginPath();
+  let first = true;
+  
+  const level = S.aiHumanizeLevel ? parseInt(S.aiHumanizeLevel as any) : 0;
+  const maxJitter = level === 1 ? 0.3 : (level === 2 ? 1.0 : (level >= 3 ? 2.5 : 0));
+  
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    let px = p.x;
+    let py = p.y;
+    if (maxJitter > 0) {
+      const seed = Math.floor(px) * 1000 + Math.floor(py);
+      const nx = (Math.sin(seed * 12.9898) * 43758.5453) % 1;
+      const ny = (Math.cos(seed * 78.233) * 43758.5453) % 1;
+      px += nx * maxJitter;
+      py += ny * maxJitter;
+    }
+    
+    if (first) {
+      c.moveTo(px, py);
+      first = false;
+    } else {
+      c.lineTo(px, py);
+    }
+  }
   // Check if per-point pressure data exists
   const hasPressure = pts.some(p => p.p !== undefined && Math.abs(p.p - 1) > 0.01);
   if (pts.length === 1) {
@@ -418,14 +444,27 @@ function drawShape(c, t, x1, y1, x2, y2, color, fill, size, opacity) {
   c.strokeStyle = color;
   c.lineWidth = size;
   c.lineCap = 'round';
+
+  let dx1 = x1, dy1 = y1, dx2 = x2, dy2 = y2;
+  const level = S.aiHumanizeLevel ? parseInt(S.aiHumanizeLevel as any) : 0;
+  if (level > 0) {
+    const maxJitter = level === 1 ? 0.3 : (level === 2 ? 1.0 : 2.5);
+    const seed = Math.floor(x1) * 1000 + Math.floor(y1);
+    const nx1 = (Math.sin(seed * 12.9898) * 43758.5453) % 1;
+    const ny1 = (Math.cos(seed * 78.233) * 43758.5453) % 1;
+    const nx2 = (Math.sin((seed+1) * 12.9898) * 43758.5453) % 1;
+    const ny2 = (Math.cos((seed+1) * 78.233) * 43758.5453) % 1;
+    dx1 += nx1 * maxJitter; dy1 += ny1 * maxJitter;
+    dx2 += nx2 * maxJitter; dy2 += ny2 * maxJitter;
+  }
   c.lineJoin = 'round';
   c.fillStyle = fill || color;
-  if (t === 'line') { c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke(); }
+  if (t === 'line') { c.beginPath(); c.moveTo(dx1, dy1); c.lineTo(dx2, dy2); c.stroke(); }
   else if (t === 'rect') {
-    const l = Math.min(x1, x2), t = Math.min(y1, y2), w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
+    const l = Math.min(dx1, dx2), t = Math.min(dy1, dy2), w = Math.abs(dx2 - dx1), h = Math.abs(dy2 - dy1);
     c.fillRect(l, t, w, h); c.strokeRect(l, t, w, h);
   } else if (t === 'circle') {
-    const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2;
+    const cx = (dx1 + dx2) / 2, cy = (dy1 + dy2) / 2, rx = Math.abs(dx2 - dx1) / 2, ry = Math.abs(dy2 - dy1) / 2;
     c.beginPath(); c.ellipse(cx, cy, rx || 1, ry || 1, 0, 0, Math.PI * 2); c.fill(); c.stroke();
   }
   c.restore();
@@ -3820,8 +3859,12 @@ function interpObj(a, b, t) {
           o.pts.push(pt);
         }
     } else if (k === 'color' || k === 'fillColor') {
-      const ac = a[k] || '#000000', bc = (b && b[k]) || ac;
-      o[k] = interpColor(ac, bc, t);
+      if (k === 'fillColor' && !a[k] && (!b || !b[k])) {
+        o[k] = null;
+      } else {
+        const ac = a[k] || '#000000', bc = (b && b[k]) || ac;
+        o[k] = interpColor(ac, bc, t);
+      }
     } else if (k === 'holes' && (a.holes || (b && b.holes))) {
       const aHoles = a.holes || [];
       const bHoles = (b && b.holes) || aHoles;
@@ -3919,8 +3962,11 @@ function rebuildTweens() {
       const out = [];
       for (let oi = 0; oi < fObs.length; oi++) {
         const fo = fObs[oi];
-        const toObj = tObs.find(o => fo.uid && o.uid === fo.uid) || tObs[oi];
-        console.log(`[rebuildTweens] oi=${oi}, fo.type=${fo.type}, toObj.type=${toObj?.type}, match=${fo.type === toObj?.type}`);
+        let toObj = tObs.find(o => fo.uid && o.uid === fo.uid);
+        if (!toObj && (!fo.uid || !fo.uid.startsWith('ai_'))) {
+           // Only fallback to index matching for non-AI objects
+           toObj = tObs[oi];
+        }
         if (fo && toObj && fo.type === toObj.type) {
           if (fo.type === 'fill') {
             const c = document.createElement('canvas');
@@ -4377,7 +4423,7 @@ function serialize() {
         const serializeChildren = (children) => (children || []).map(obj => {
           const oc = {};
           for (const k of Object.keys(obj)) {
-            if (k === 'pts') oc.pts = obj.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) }));
+            if (k === 'pts') oc.pts = obj.pts ? obj.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) })) : undefined;
             else if (k === 'fc') oc.fcData = obj.fc.toDataURL();
             else if (k === 'children') oc.children = serializeChildren(obj.children);
             else oc[k] = obj[k];
@@ -4399,10 +4445,10 @@ function serialize() {
     frames: S.frames.map(f => {
       const o = {};
       for (const [lid, objs] of Object.entries(f.o || {})) {
-        o[lid] = objs.map(obj => {
+        o[lid] = (objs || []).map(obj => {
           const oc = {};
           for (const k of Object.keys(obj)) {
-            if (k === 'pts') oc.pts = obj.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) }));
+            if (k === 'pts') oc.pts = obj.pts ? obj.pts.map(p => ({ x: p.x, y: p.y, ...(p.p !== undefined ? { p: p.p } : {}) })) : undefined;
             else if (k === 'fc') oc.fcData = obj.fc.toDataURL();
             else oc[k] = obj[k];
           }
@@ -6391,6 +6437,19 @@ function setupStartScreen() {
     });
   }
 
+  const aiEnableCheckbox = $('setting-enable-ai') as HTMLInputElement;
+  const aiGenerateBtn = $('ai-generate-btn');
+  if (aiEnableCheckbox && aiGenerateBtn) {
+    const isAiEnabled = localStorage.getItem('enableAiMenu') === 'true';
+    aiEnableCheckbox.checked = isAiEnabled;
+    aiGenerateBtn.style.display = isAiEnabled ? 'flex' : 'none';
+    
+    aiEnableCheckbox.addEventListener('change', () => {
+      localStorage.setItem('enableAiMenu', aiEnableCheckbox.checked.toString());
+      aiGenerateBtn.style.display = aiEnableCheckbox.checked ? 'flex' : 'none';
+    });
+  }
+
   renderKeybindingsUI();
 
   // Open button
@@ -6603,3 +6662,468 @@ ipcRenderer.on('request-close', async () => {
     ipcRenderer.invoke('quit-app');
   }
 });
+
+// ==================== AI GENERATOR (BETA) ====================
+const aiGenerateBtn = $('ai-generate-btn');
+const aiModal = $('ai-modal');
+const aiClose = $('ai-close');
+const aiCancel = $('ai-cancel');
+const aiStartBtn = $('ai-start-btn');
+const aiPrompt = $('ai-prompt') as HTMLTextAreaElement;
+const aiApiKey = $('ai-api-key') as HTMLInputElement;
+const aiModel = $('ai-model') as HTMLSelectElement;
+const aiFrameCount = $('ai-frame-count') as HTMLSelectElement;
+const aiKeyframeCount = $('ai-keyframe-count') as HTMLSelectElement;
+const aiHumanizeLevel = $('ai-humanize-level') as HTMLSelectElement;
+const aiAutoTween = $('ai-auto-tween') as HTMLInputElement;
+const settingAiHumanize = $('setting-ai-humanize') as HTMLSelectElement;
+
+if (settingAiHumanize) {
+  settingAiHumanize.value = localStorage.getItem('aiHumanizeLevel') || '2';
+  S.aiHumanizeLevel = settingAiHumanize.value;
+  settingAiHumanize.addEventListener('change', () => {
+    localStorage.setItem('aiHumanizeLevel', settingAiHumanize.value);
+    S.aiHumanizeLevel = settingAiHumanize.value;
+    dirtyCache();
+    fullRender();
+  });
+}
+
+if (aiGenerateBtn && aiModal) {
+  aiGenerateBtn.addEventListener('click', () => {
+    document.body.style.pointerEvents = 'auto';
+    if (aiModal) aiModal.style.pointerEvents = 'auto';
+    const progressOverlay = $('ai-progress-overlay');
+    if (progressOverlay) progressOverlay.style.display = 'none';
+    
+    if (aiHumanizeLevel) aiHumanizeLevel.value = S.aiHumanizeLevel || '2';
+    if (aiApiKey) aiApiKey.value = localStorage.getItem('geminiApiKey') || '';
+    if (aiModel) aiModel.value = localStorage.getItem('geminiModel') || 'gemini-3.5-flash';
+    if (aiFrameCount) aiFrameCount.value = localStorage.getItem('geminiFrameCount') || '12';
+    if (aiKeyframeCount) aiKeyframeCount.value = localStorage.getItem('geminiKeyframeCount') || '3';
+    if (aiAutoTween) aiAutoTween.checked = localStorage.getItem('geminiAutoTween') !== 'false';
+    aiModal.classList.remove('hidden');
+    setTimeout(() => { if (aiPrompt) aiPrompt.focus(); }, 100);
+  });
+  
+  const closeAiModal = () => aiModal.classList.add('hidden');
+  if (aiClose) aiClose.addEventListener('click', closeAiModal);
+  if (aiCancel) aiCancel.addEventListener('click', closeAiModal);
+  
+  if (aiStartBtn) aiStartBtn.addEventListener('click', async () => {
+    const prompt = aiPrompt.value.trim();
+    if (!prompt) {
+      alert('Please enter a prompt for the AI to generate.');
+      return;
+    }
+    
+    if (!aiApiKey || !aiApiKey.value.trim()) {
+      alert('Please enter your Gemini API Key. You can get one for free from Google AI Studio.');
+      return;
+    }
+    
+    // Set humanize level and Gemini settings globally from modal
+    if (aiHumanizeLevel) {
+      S.aiHumanizeLevel = aiHumanizeLevel.value;
+      if (settingAiHumanize) settingAiHumanize.value = aiHumanizeLevel.value;
+      localStorage.setItem('aiHumanizeLevel', aiHumanizeLevel.value);
+    }
+    localStorage.setItem('geminiApiKey', aiApiKey.value.trim());
+    if (aiModel) localStorage.setItem('geminiModel', aiModel.value);
+    
+    let frameCount = 12;
+    if (aiFrameCount) {
+      localStorage.setItem('geminiFrameCount', aiFrameCount.value);
+      frameCount = parseInt(aiFrameCount.value) || 12;
+    }
+    
+    let keyframeCount = 3;
+    if (aiKeyframeCount) {
+      localStorage.setItem('geminiKeyframeCount', aiKeyframeCount.value);
+      keyframeCount = parseInt(aiKeyframeCount.value) || 3;
+    }
+    
+    let autoTween = true;
+    if (aiAutoTween) {
+      localStorage.setItem('geminiAutoTween', aiAutoTween.checked.toString());
+      autoTween = aiAutoTween.checked;
+    }
+    
+    aiStartBtn.disabled = true;
+    closeAiModal();
+    const overlay = $('ai-progress-overlay');
+    const fill = $('ai-progress-fill');
+    const text = $('ai-progress-text');
+    let progress = 0;
+    let progressInterval: any = null;
+    const abortController = new AbortController();
+    
+    const cancelBtn = $('ai-progress-cancel');
+    const onCancel = () => {
+      abortController.abort();
+      if (cancelBtn) cancelBtn.removeEventListener('click', onCancel);
+    };
+    if (cancelBtn) cancelBtn.addEventListener('click', onCancel);
+
+    if (overlay && fill && text) {
+      overlay.style.display = 'flex';
+      fill.style.width = '0%';
+      text.innerText = '0%';
+      progressInterval = setInterval(() => {
+        progress += (90 - progress) * 0.05; // ease towards 90%
+        fill.style.width = `${progress}%`;
+        text.innerText = `${Math.round(progress)}%`;
+      }, 100);
+    }
+    
+    const aiModeAnimate = $('ai-mode-animate') as HTMLInputElement;
+    const isAnimateMode = aiModeAnimate && aiModeAnimate.checked;
+
+    let baseFrameJSON = undefined;
+    let rawBaseFrameObj = undefined;
+    if (isAnimateMode && S.frames[S.frameIdx]) {
+      const baseObjs = [];
+      const fObj = S.frames[S.frameIdx].o;
+      rawBaseFrameObj = fObj;
+      for (const lid in fObj) {
+        for (const obj of fObj[lid]) {
+          if (!['circle', 'line', 'rect', 'pen', 'stroke', 'fillPath', 'fill'].includes(obj.type)) continue;
+          
+          let type = obj.type;
+          let filled = false;
+          if (type === 'stroke') { type = 'pen'; filled = false; }
+          else if (type === 'fillPath' || type === 'fill') { type = 'pen'; filled = true; }
+          
+          obj.uid = obj.uid || `ai_base_${Math.random()}`; // Give it a UID immediately
+
+          // Calculate bounding box and center for the AI
+          const b = getObjBounds(obj);
+          const cx = b.x + b.w / 2;
+          const cy = b.y + b.h / 2;
+
+          const aiObj: any = {
+            id: obj.uid,
+            type,
+            cx: Math.round(cx),
+            cy: Math.round(cy),
+            w: Math.round(b.w),
+            h: Math.round(b.h),
+            color: obj.color || '#000000'
+          };
+          if (type === 'pen' && obj.pts) {
+             const simplified = simplifyPath(obj.pts, 2.0);
+             aiObj.pts = simplified.map((p: any) => ({x: Math.round(p.x), y: Math.round(p.y)}));
+          } else if (type === 'circle') {
+            const r = Math.abs(obj.x2 - obj.x1) / 2;
+            aiObj.r = Math.round(r);
+          } else if (obj.x1 !== undefined) {
+            aiObj.x1 = Math.round(obj.x1); aiObj.y1 = Math.round(obj.y1);
+            aiObj.x2 = Math.round(obj.x2); aiObj.y2 = Math.round(obj.y2);
+          }
+          baseObjs.push(aiObj);
+        }
+      }
+      if (baseObjs.length > 0) baseFrameJSON = JSON.stringify(baseObjs);
+    }
+
+    try {
+      await generateProceduralAnimation(prompt, frameCount, abortController.signal, autoTween, keyframeCount, baseFrameJSON, rawBaseFrameObj);
+      if (fill && text) {
+        fill.style.width = '100%';
+        text.innerText = '100%';
+      }
+      setTimeout(() => {
+        if (overlay) overlay.style.display = 'none';
+        showToast('✅ AI Generation Complete!');
+      }, 500);
+      
+      updateTL();
+      dirtyCache();
+      fullRender();
+    } catch (e: any) {
+      if (overlay) overlay.style.display = 'none';
+      if (progressInterval) clearInterval(progressInterval);
+      if (e.name === 'AbortError') {
+        showToast('🛑 AI Generation Cancelled');
+      } else {
+        console.error(e);
+        setTimeout(() => {
+          document.body.style.pointerEvents = 'auto';
+          alert('AI Generation failed: ' + e.message);
+        }, 50);
+      }
+    } finally {
+      aiStartBtn.disabled = false;
+      document.body.style.pointerEvents = 'auto';
+      if (aiModal) aiModal.style.pointerEvents = 'auto';
+      if (progressInterval) clearInterval(progressInterval);
+      const progressOverlay = $('ai-progress-overlay');
+      if (progressOverlay) progressOverlay.style.display = 'none';
+    }
+  });
+}
+
+// Real Gemini AI Generator
+async function generateProceduralAnimation(prompt: string, frameCount: number = 12, signal?: AbortSignal, autoTween: boolean = true, aiKeyframeCount: number = 3, baseFrameJSON?: string, rawBaseFrameObj?: any) {
+  const apiKey = localStorage.getItem('geminiApiKey');
+  const model = localStorage.getItem('geminiModel') || 'gemini-3.5-flash';
+  if (!apiKey) throw new Error('Gemini API Key is missing.');
+
+  const canvasWidth = S.w || 800;
+  const canvasHeight = S.h || 600;
+
+  let systemInstruction = `You are a professional generative vector animation AI.
+Task: Generate exactly ${aiKeyframeCount} KEYFRAMES of vector shapes for: "${prompt}".
+Canvas: ${canvasWidth}x${canvasHeight}.
+OUTPUT ONLY RAW JSON. NO MARKDOWN. NO BACKTICKS. NO CONVERSATION.
+Format: JSON Array of exactly ${aiKeyframeCount} arrays. (Each sub-array is a KEYFRAME in chronological order). The application will automatically interpolate the missing frames.
+Shape schema: {"id": "string", "type": "circle"|"line"|"rect"|"pen", "x1": num, "y1": num, "x2": num, "y2": num, "r": num, "pts": [{"x":num,"y":num}], "color": "#hex", "filled": boolean, "size": num}
+COORDINATE RULES:
+- "size" is ALWAYS stroke thickness (usually 2-5). It is NEVER the radius!
+- For lines: x1,y1 is start, x2,y2 is end.
+- For rects: x1,y1 is top-left, x2,y2 is bottom-right.
+- For circles: x1,y1 is the CENTER point, and "r" is the RADIUS. (Leave x2, y2 empty).
+- For pen (complex shapes): provide an array of points in "pts" (e.g. [{"x":10,"y":20}, {"x":30,"y":40}]). Set "filled": true for solid objects (like a car body), or false for just outlines! Use this for complex, non-simple characters!
+OPTIMIZATION RULES:
+1. Tracking: Assign a unique "id" (e.g., "head", "left_leg", "sword") to EVERY shape and keep it consistent across ALL ${aiKeyframeCount} KEYFRAMES. This is CRITICAL for the tweening engine to interpolate them!
+2. Complexity: Since you only generate ${aiKeyframeCount} frames, use your token budget to create highly detailed, complex characters (dragons, cars, detailed people) using the "pen" tool with many points! Max 25 shapes per frame.
+3. Consistency: Background objects/obstacles MUST have the EXACT same coordinates in every frame to prevent jitter.
+4. Anatomy: Keep body parts strictly connected!
+5. Animation: Focus on extreme poses for the keyframes (Start Pose -> Anticipation/Action Pose -> Final Pose).
+6. Bounds: NO coordinate outside 0-${canvasWidth} or 0-${canvasHeight}. Round to integers.`;
+
+  if (baseFrameJSON) {
+    systemInstruction = `You are a professional 2D animation AI doing "Rigging-Free Transform Animation".
+Task: Animate the user's base frame to do: "${prompt}".
+OUTPUT ONLY RAW JSON. NO MARKDOWN. NO BACKTICKS.
+Format: JSON Array of exactly ${aiKeyframeCount} arrays.
+USER'S BASE FRAME OBJECTS (JSON):
+${baseFrameJSON}
+CRITICAL RULES:
+1. You must ONLY output transformations ("tx", "ty", "angle", "scaleX", "scaleY") for the EXACT same "id"s provided in the base frame.
+2. Analyze the provided "pts" or coordinates in the base frame to understand the anatomy (e.g., figure out which ID is the left arm, right leg, head, etc., based on their relative positions and shapes).
+3. DO NOT output "pts", "x1", "y1" or any absolute coordinates! Output Schema: {"id": "string", "tx": num, "ty": num, "angle": num, "scaleX": num, "scaleY": num}. (tx/ty are translation offsets from their original position. angle is rotation in degrees).
+4. Frame 1 should be the start pose (usually near tx:0, ty:0, angle:0), and Frame ${aiKeyframeCount} should be the final pose.`;
+  }
+
+  let requestBody: any = {
+    contents: [{ parts: [{ text: prompt }] }],
+    systemInstruction: { parts: [{ text: systemInstruction }] },
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: "application/json"
+    }
+  };
+
+  let response;
+  let lastErr = null;
+  const versions = ['v1beta', 'v1alpha', 'v1'];
+  
+  for (let i = 0; i < versions.length; i++) {
+    const v = versions[i];
+    try {
+      response = await fetch(`https://generativelanguage.googleapis.com/${v}/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal
+      });
+      
+      if (response.ok) break;
+      
+      const err = await response.json().catch(() => ({}));
+      lastErr = new Error(err.error?.message || 'API request failed with status ' + response.status);
+      
+      // If it's an API key error, don't try other versions
+      if (response.status === 400 && lastErr.message.toLowerCase().includes('api key')) {
+        break;
+      }
+      
+      // If the API complains about the new schema (systemInstruction or responseMimeType), downgrade and retry
+      if (lastErr.message.includes('systemInstruction') || lastErr.message.includes('responseMimeType') || lastErr.message.includes('generation_config')) {
+        if (requestBody.systemInstruction) {
+          console.warn(`API ${v} rejected modern schema. Downgrading to legacy prompt format...`);
+          requestBody = {
+            contents: [{ parts: [{ text: `SYSTEM INSTRUCTION:\n${systemInstruction}\n\nUSER PROMPT:\n${prompt}\n\nIMPORTANT: YOU MUST RETURN ONLY VALID RAW JSON. NO MARKDOWN.` }] }],
+            generationConfig: { temperature: 0.2 }
+          };
+          i--; // Retry the same version with the new payload
+          continue;
+        }
+      }
+      
+      // For any other error (including 404), keep trying the next version just in case
+      continue;
+    } catch (e: any) {
+      if (e.name === 'AbortError') throw e;
+      lastErr = e;
+    }
+  }
+
+  if (!response || !response.ok) {
+    throw lastErr || new Error('API request failed');
+  }
+
+  const data = await response.json();
+  let jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!jsonText) throw new Error('No content returned from AI.');
+
+  // Clean up potential markdown formatting and conversational text safely using regex
+  const jsonMatch = jsonText.match(/\[[\s\S]*\]/);
+  if (jsonMatch) {
+    jsonText = jsonMatch[0];
+  } else {
+    jsonText = jsonText.replace(/```json/gi, '').replace(/```/g, '').trim();
+  }
+
+  let frames;
+  try {
+    frames = JSON.parse(jsonText);
+  } catch (e) {
+    console.error("Failed JSON:", jsonText);
+    throw new Error('AI returned invalid JSON formatting. See console.');
+  }
+
+  if (!Array.isArray(frames)) throw new Error('AI output is not an array of frames.');
+  
+  if (frames.length > 0 && !Array.isArray(frames[0])) {
+    frames = [frames];
+  }
+
+  const numAiFrames = Math.min(frames.length, aiKeyframeCount);
+  let targetTotalFrames = frameCount;
+  if (baseFrameJSON) targetTotalFrames = S.frameIdx + frameCount;
+
+  // Ensure timeline has enough frames
+  while (S.frames.length < targetTotalFrames) {
+    S.frames.push({ o: {}, key: false, _hist: [], _histIdx: -1 });
+  }
+
+  // Calculate target indices for the keyframes
+  const indices = [];
+  if (baseFrameJSON) {
+    const startIdx = S.frameIdx + 1;
+    const availableFrames = targetTotalFrames - startIdx;
+    if (numAiFrames === 1) {
+      indices.push(Math.min(targetTotalFrames - 1, startIdx + Math.floor(availableFrames / 2)));
+    } else {
+      for (let i = 0; i < numAiFrames; i++) {
+        indices.push(startIdx + Math.floor((i / (numAiFrames - 1)) * (availableFrames - 1)));
+      }
+    }
+  } else {
+    if (numAiFrames === 1) {
+      indices.push(0);
+    } else {
+      for (let i = 0; i < numAiFrames; i++) {
+        indices.push(Math.floor((i / (numAiFrames - 1)) * (targetTotalFrames - 1)));
+      }
+    }
+  }
+
+  let flatRawBaseFrameObjs: any[] = [];
+  if (rawBaseFrameObj) {
+    for (const lid in rawBaseFrameObj) {
+      for (const obj of rawBaseFrameObj[lid]) {
+        flatRawBaseFrameObjs.push(obj);
+      }
+    }
+  }
+
+  for (let i = 0; i < numAiFrames; i++) {
+    const objs = frames[i];
+    if (!Array.isArray(objs)) continue;
+    
+    const targetIdx = indices[i];
+    
+    // Ensure the timeline has this frame
+    S.frames[targetIdx].key = true;
+    if (!S.frames[targetIdx].o) S.frames[targetIdx].o = {};
+    
+    // Process and validate objects
+    const validObjs = [];
+    for (const raw of objs) {
+      if (rawBaseFrameObj) {
+        const baseObj = flatRawBaseFrameObjs.find(o => o.uid === raw.id);
+        if (baseObj) {
+          const newObj = JSON.parse(JSON.stringify(baseObj));
+          newObj.x = (newObj.x || 0) + (Number(raw.tx) || 0);
+          newObj.y = (newObj.y || 0) + (Number(raw.ty) || 0);
+          newObj.angle = (newObj.angle || 0) + (Number(raw.angle) || 0);
+          if (raw.scaleX !== undefined) newObj.scaleX = (newObj.scaleX || 1) * Number(raw.scaleX);
+          if (raw.scaleY !== undefined) newObj.scaleY = (newObj.scaleY || 1) * Number(raw.scaleY);
+          validObjs.push(newObj);
+        }
+        continue;
+      }
+      
+      if (!raw || !['circle', 'line', 'rect', 'pen'].includes(raw.type)) continue;
+      
+      let pts = [];
+      if (raw.type === 'pen' && Array.isArray(raw.pts)) {
+         pts = raw.pts.map(p => ({ x: Number(p.x) || 0, y: Number(p.y) || 0 }));
+      }
+      
+      let finalX1 = Number(raw.x1) || 0;
+      let finalY1 = Number(raw.y1) || 0;
+      let finalX2 = Number(raw.x2) || 0;
+      let finalY2 = Number(raw.y2) || 0;
+      
+      // If AI provided center and radius for a circle, convert to bounding box
+      const r = Number(raw.r) || Number(raw.radius) || 0;
+      if (raw.type === 'circle' && r > 0) {
+        finalX1 = (Number(raw.x1) || 0) - r;
+        finalY1 = (Number(raw.y1) || 0) - r;
+        finalX2 = (Number(raw.x1) || 0) + r;
+        finalY2 = (Number(raw.y1) || 0) + r;
+      } else if (raw.type === 'circle' && finalX1 === finalX2) {
+        // Fallback: AI used 'size' as radius instead of 'r'
+        const fallbackR = Number(raw.size) || 10;
+        finalX1 = (Number(raw.x1) || 0) - fallbackR;
+        finalY1 = (Number(raw.y1) || 0) - fallbackR;
+        finalX2 = (Number(raw.x1) || 0) + fallbackR;
+        finalY2 = (Number(raw.y1) || 0) + fallbackR;
+      }
+      
+      validObjs.push({
+        uid: raw.id ? String(raw.id) : `ai_auto_${Math.random()}`, // Map semantic ID to UID for Tween engine
+        type: raw.type === 'pen' ? (raw.filled ? 'fillPath' : 'stroke') : raw.type,
+        x1: finalX1,
+        y1: finalY1,
+        x2: finalX2,
+        y2: finalY2,
+        pts: pts.length > 0 ? pts : undefined,
+        color: raw.color || '#000000',
+        size: Number(raw.size) || 3,
+        fillColor: raw.fillColor !== undefined ? raw.fillColor : null,
+        opacity: 1,
+        key: true
+      });
+    }
+
+    // Insert AI shapes to current layer
+    const lid = S.layers[S.layerIdx].id;
+    if (!S.frames[targetIdx].o[lid]) S.frames[targetIdx].o[lid] = [];
+    S.frames[targetIdx].o[lid].push(...validObjs);
+  }
+  
+  // Auto-trigger Tweening or implement Stop Motion (Hold interpolation)
+  if (numAiFrames >= 2) {
+    if (autoTween) {
+      rebuildTweens();
+    } else {
+      // Hold previous keyframe for empty frames
+      for (let i = 0; i < targetTotalFrames; i++) {
+        if (!S.frames[i].key) {
+           let prevKey = 0;
+           for(let j = i; j >= 0; j--) { if (S.frames[j].key) { prevKey = j; break; } }
+           S.frames[i].o[lid] = cloneObjDeep(S.frames[prevKey].o[lid] || []);
+        }
+      }
+    }
+  }
+  
+  S.tlDirty = true;
+  fullRender();
+  S.frameIdx = 0; // Rewind to start to preview
+}

@@ -20,6 +20,7 @@ export const S: any = {
   smoothness: 0, spacing: 0, pressureSens: false, pressureCurve: 'soft', pressureExp: 2, pressureMin: 0, mergeMode: true,
   fillTolerance: 10,
   autoSmooth: false, pixelSnap: false,
+  aiHumanizeLevel: 2, // 0: Off, 1: Subtle, 2: Normal, 3: Intense
 };
 
 export const Globals = { bgAudio: null as any, bgAudioOffset: 0, bgAudioStartTrim: 0, bgAudioEndTrim: 0, bgAudioData: null as any, _penPath: null as any };
