@@ -1,7 +1,11 @@
 {
   "name": "dolphin-animate",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "description": "An open-source frame-by-frame animation tool",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Agony270313/Dolphin-Animate.git"
+  },
   "main": "main.js",
   "scripts": {
     "dev": "vite",
@@ -13,6 +17,14 @@
   "build": {
     "appId": "dolphin-animate.app",
     "productName": "Dolphin Animate",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Agony270313",
+        "repo": "Dolphin-Animate",
+        "releaseType": "release"
+      }
+    ],
     "directories": {
       "output": "C:/Users/tclpi/AppData/Local/Temp/opencode/dolphin-dist"
     },
