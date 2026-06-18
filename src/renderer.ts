@@ -1,6 +1,7 @@
 const { ipcRenderer } = require('electron');
 import { $, canvas, overlay, ctx, octx } from './core/DOM';
 import { contours } from 'd3-contour';
+import { getStroke } from 'perfect-freehand';
 
 window.addEventListener('error', (e) => {
   alert('CRASH: ' + e.message + '\nAt: ' + e.filename + ':' + e.lineno);
@@ -271,7 +272,38 @@ function L() {
   return S.layers[S.layerIdx]; 
 }
 function F(i) { if (i === undefined) i = S.frameIdx; if (!S.frames[i]) S.frames[i] = { o: {}, key: true, _hist: [], _histIdx: -1 }; return S.frames[i]; }
-function obs(fi, li) { const f = F(fi); if (!f.o[li]) f.o[li] = []; return f.o[li]; }
+function getExposureKeyframeIndexFor(frames: any[], fi: number): number {
+  for (let i = fi; i >= 0; i--) {
+    if (frames[i] && frames[i].key) return i;
+  }
+  return 0;
+}
+function getExposureKeyframeIndex(fi: number): number {
+  return getExposureKeyframeIndexFor(S.frames, fi);
+}
+function toggleKeyframe(idx: number) {
+  const f = S.frames[idx];
+  if (!f) return;
+  if (idx === 0) return; // Prevent removing keyframe on the first frame
+  f.key = !f.key;
+  if (f.key) {
+    const prevKeyIdx = getExposureKeyframeIndex(idx - 1);
+    const prevKeyFrame = S.frames[prevKeyIdx];
+    if (prevKeyFrame) {
+      for (const l of S.layers) {
+        f.o[l.id] = prevKeyFrame.o[l.id] ? prevKeyFrame.o[l.id].map(o => cloneObj(o, true)) : [];
+      }
+    }
+  } else {
+    f.o = {};
+  }
+}
+function obs(fi, li) {
+  const fIdx = getExposureKeyframeIndex(fi);
+  const f = F(fIdx);
+  if (!f.o[li]) f.o[li] = [];
+  return f.o[li];
+}
 function getActiveLayerId() { const l = L(); return l ? l.id : null; }
 function syncActiveLayer() { S.activeLayerId = getActiveLayerId(); }
 function setActiveLayerByIndex(idx) {
@@ -325,7 +357,7 @@ function mkLayer(name) {
 }
 
 // ---- Vector draw primitives ----
-function drawStroke(c, pts, color, size, opacity, composite) {
+function drawStroke(c, pts, color, size, opacity, composite, thinning, smoothing, simulatePressure) {
   if (!pts || pts.length < 2) return;
   c.save();
   c.globalAlpha = opacity;
@@ -335,105 +367,66 @@ function drawStroke(c, pts, color, size, opacity, composite) {
   c.lineCap = 'round';
   c.lineJoin = 'round';
   
-  c.beginPath();
-  let first = true;
-  
   const level = S.aiHumanizeLevel ? parseInt(S.aiHumanizeLevel as any) : 0;
   const maxJitter = level === 1 ? 0.3 : (level === 2 ? 1.0 : (level >= 3 ? 2.5 : 0));
   
-  for (let i = 0; i < pts.length; i++) {
-    const p = pts[i];
-    let px = p.x;
-    let py = p.y;
-    if (maxJitter > 0) {
-      const seed = Math.floor(px) * 1000 + Math.floor(py);
-      const nx = (Math.sin(seed * 12.9898) * 43758.5453) % 1;
-      const ny = (Math.cos(seed * 78.233) * 43758.5453) % 1;
-      px += nx * maxJitter;
-      py += ny * maxJitter;
-    }
-    
-    if (first) {
-      c.moveTo(px, py);
-      first = false;
-    } else {
-      c.lineTo(px, py);
-    }
-  }
-  // Check if per-point pressure data exists
-  const hasPressure = pts.some(p => p.p !== undefined && Math.abs(p.p - 1) > 0.01);
-  if (pts.length === 1) {
-    c.fillStyle = color;
-    c.beginPath(); c.arc(pts[0].x, pts[0].y, size / 2, 0, Math.PI * 2); c.fill();
-  } else if (pts.length === 2 || (hasPressure && pts.length <= 4)) {
-    c.beginPath(); c.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) {
-      const w = size * (pts[i].p !== undefined ? pts[i].p : 1);
-      if (Math.abs(w - c.lineWidth) > 0.5) { c.stroke(); c.beginPath(); c.moveTo(pts[i-1].x, pts[i-1].y); c.lineWidth = w; }
-      c.lineTo(pts[i].x, pts[i].y);
-    }
-    c.stroke();
-  } else if (hasPressure) {
-    // ---- Smooth variable-width stroke ----
-    // Sample many small segments along Catmull-Rom→Bezier curves,
-    // interpolating width smoothly for pro-quality rendering.
-    const SEGS = 12; // samples per bezier segment
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p_prev = pts[Math.max(0, i - 1)];
-      const p_curr = pts[i];
-      const p_next = pts[i + 1];
-      const p_next2 = pts[Math.min(i + 2, pts.length - 1)];
-
-      // Bezier control points (Catmull-Rom conversion)
-      const cp1x = p_curr.x + (p_next.x - p_prev.x) / 6;
-      const cp1y = p_curr.y + (p_next.y - p_prev.y) / 6;
-      const cp2x = p_next.x - (p_next2.x - p_curr.x) / 6;
-      const cp2y = p_next.y - (p_next2.y - p_curr.y) / 6;
-
-      // Pressure at start and end of this segment
-      const pStart = p_curr.p !== undefined ? p_curr.p : 1;
-      const pEnd = p_next.p !== undefined ? p_next.p : 1;
-
-      let prevX = p_curr.x, prevY = p_curr.y;
-      let prevW = size * pStart;
-
-      for (let s = 1; s <= SEGS; s++) {
-        const t = s / SEGS;
-        const mt = 1 - t;
-        // Cubic bezier point at t
-        const bx = mt*mt*mt*p_curr.x + 3*mt*mt*t*cp1x + 3*mt*t*t*cp2x + t*t*t*p_next.x;
-        const by = mt*mt*mt*p_curr.y + 3*mt*mt*t*cp1y + 3*mt*t*t*cp2y + t*t*t*p_next.y;
-        // Interpolated width
-        const w = size * (pStart + (pEnd - pStart) * t);
-
-        // Only stroke if width changed significantly (reduces draw calls)
-        if (Math.abs(w - prevW) > 0.3 || s === SEGS) {
-          c.lineWidth = (prevW + w) / 2; // average width for this micro-segment
-          c.beginPath();
-          c.moveTo(prevX, prevY);
-          c.lineTo(bx, by);
-          c.stroke();
-          prevX = bx; prevY = by; prevW = w;
-        }
+  // Use perfect-freehand for brush strokes (they contain 'p' values)
+  const isFreehand = pts.some(p => p.p !== undefined);
+  if (isFreehand && pts.length > 1) {
+    const mappedPts = pts.map(p => {
+      let px = p.x, py = p.y;
+      if (maxJitter > 0) {
+        const seed = Math.floor(px) * 1000 + Math.floor(py);
+        px += ((Math.sin(seed * 12.9898) * 43758.5453) % 1) * maxJitter;
+        py += ((Math.cos(seed * 78.233) * 43758.5453) % 1) * maxJitter;
       }
+      return { x: px, y: py, pressure: p.p !== undefined ? p.p : 0.5 };
+    });
+    
+    // Default to global settings ONLY if thinning/smoothing aren't explicitly provided
+    const finalThinning = thinning !== undefined ? thinning : (S.thinning !== undefined ? S.thinning : 0.5);
+    const finalSmoothing = smoothing !== undefined ? smoothing : (S.smoothing !== undefined ? S.smoothing : 0.5);
+    const finalSimulatePressure = simulatePressure !== undefined ? simulatePressure : false;
+
+    const outline = getStroke(mappedPts, {
+      size: size,
+      thinning: finalThinning,
+      smoothing: finalSmoothing,
+      streamline: 0.5,
+      simulatePressure: finalSimulatePressure
+    });
+    
+    if (outline.length > 0) {
+      c.fillStyle = color;
+      c.beginPath();
+      c.moveTo(outline[0][0], outline[0][1]);
+      for (let i = 1; i < outline.length; i++) {
+        c.lineTo(outline[i][0], outline[i][1]);
+      }
+      c.closePath();
+      c.fill();
     }
   } else {
+    // Basic fallback for non-freehand strokes (like pen tool or simple dots)
     c.beginPath();
-    c.moveTo(pts[0].x, pts[0].y);
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p_prev = pts[Math.max(0, i - 1)];
-      const p_curr = pts[i];
-      const p_next = pts[i + 1];
-      const p_next2 = pts[Math.min(i + 2, pts.length - 1)];
-      c.bezierCurveTo(
-        p_curr.x + (p_next.x - p_prev.x) / 6,
-        p_curr.y + (p_next.y - p_prev.y) / 6,
-        p_next.x - (p_next2.x - p_curr.x) / 6,
-        p_next.y - (p_next2.y - p_curr.y) / 6,
-        p_next.x, p_next.y
-      );
+    let first = true;
+    for (let i = 0; i < pts.length; i++) {
+      let px = pts[i].x, py = pts[i].y;
+      if (maxJitter > 0) {
+        const seed = Math.floor(px) * 1000 + Math.floor(py);
+        px += ((Math.sin(seed * 12.9898) * 43758.5453) % 1) * maxJitter;
+        py += ((Math.cos(seed * 78.233) * 43758.5453) % 1) * maxJitter;
+      }
+      if (first) { c.moveTo(px, py); first = false; }
+      else { c.lineTo(px, py); }
     }
-    c.stroke();
+    
+    if (pts.length === 1) {
+      c.fillStyle = color;
+      c.beginPath(); c.arc(pts[0].x, pts[0].y, size / 2, 0, Math.PI * 2); c.fill();
+    } else {
+      c.stroke();
+    }
   }
   c.restore();
 }
@@ -494,7 +487,9 @@ function renderFrame(c, fi, sc, noOnion) {
     if (!f) { ctx.restore(); return; }
     const l = customLayers.find(l => l.id === layerId);
     if (!l || !l.vis) { ctx.restore(); return; }
-    const objs = f.o[l.id] || [];
+    const targetFi = getExposureKeyframeIndexFor(customFrames, fi);
+    const targetF = customFrames[targetFi] || f;
+    const objs = targetF.o[l.id] || [];
       // --- First pass: draw fills BEHIND everything ---
       for (const o of objs) {
         if (o.type === 'fillPath' && o.layerId) continue;
@@ -559,7 +554,7 @@ function renderFrame(c, fi, sc, noOnion) {
             const color = sub.color || o.color;
             const size = sub.size !== undefined ? sub.size : o.size;
             const opacity = (sub.opacity !== undefined ? sub.opacity : o.opacity) * baseAlpha;
-            drawStroke(ctx, sub.pts, color, size, opacity, o.composite || 'source-over');
+            drawStroke(ctx, sub.pts, color, size, opacity, o.composite || 'source-over', o.thinning, o.smoothing, o.simulatePressure);
           }
         } else if (o.type === 'text') {
           ctx.save();
@@ -613,7 +608,7 @@ function renderFrame(c, fi, sc, noOnion) {
                     const color = sub.color || child.color;
                     const size = sub.size !== undefined ? sub.size : child.size;
                     const opacity = (sub.opacity !== undefined ? sub.opacity : child.opacity) * baseAlpha;
-                    drawStroke(ctx, sub.pts, color, size, opacity, child.composite || 'source-over');
+                    drawStroke(ctx, sub.pts, color, size, opacity, child.composite || 'source-over', child.thinning, child.smoothing, child.simulatePressure);
                   }
                   if (hasTx) ctx.restore();
                 } else if (child.type === 'text') {
@@ -750,7 +745,9 @@ function renderFrame(c, fi, sc, noOnion) {
   if (f) {
     for (const l of S.layers) {
       if (!l.vis) continue;
-      const objs = f.o[l.id] || [];
+      const targetFi = getExposureKeyframeIndexFor(S.frames, fi);
+      const targetF = S.frames[targetFi] || f;
+      const objs = targetF.o[l.id] || [];
       if (!objs.length) continue;
       _rlc = ensureSize(_rlc, c.canvas.width, c.canvas.height);
       _rlcCtx = _rlc.getContext('2d');
@@ -890,9 +887,9 @@ function renderOverlay() {
   octx.translate(-cx - cam.x, -cy - cam.y);
 
   if (S.tool === 'eraser') {
-    drawStroke(octx, S.curStroke.pts, '#ff6b6b', S.curStroke.size + 2, 0.4, 'source-over');
+    drawStroke(octx, S.curStroke.pts, '#ff6b6b', S.curStroke.size + 2, 0.4, 'source-over', S.curStroke.thinning, S.curStroke.smoothing, S.curStroke.simulatePressure);
   } else {
-    drawStroke(octx, S.curStroke.pts, S.curStroke.color, S.curStroke.size, S.curStroke.opacity, 'source-over');
+    drawStroke(octx, S.curStroke.pts, S.curStroke.color, S.curStroke.size, S.curStroke.opacity, 'source-over', S.curStroke.thinning, S.curStroke.smoothing, S.curStroke.simulatePressure);
   }
   octx.restore();
 }
@@ -1033,7 +1030,8 @@ function getGuidePoint(guide, t) {
 
 function getAllGuides(fi) {
   const guides = [];
-  const f = S.frames[fi];
+  const targetFi = getExposureKeyframeIndex(fi);
+  const f = S.frames[targetFi];
   if (!f) return guides;
   for (const l of S.layers) {
     for (const o of (f.o[l.id] || [])) {
@@ -1064,7 +1062,8 @@ function applyGuidePosition(o, fi) {
 
 // ---- Undo (snapshots only the current frame) ----
 function cloneFrameObjects(fi) {
-  const f = S.frames[fi];
+  const fIdx = getExposureKeyframeIndex(fi);
+  const f = S.frames[fIdx];
   if (!f) return {};
   const data = {};
   for (const l of S.layers) {
@@ -1073,9 +1072,10 @@ function cloneFrameObjects(fi) {
   return data;
 }
 function saveSnapshot() {
-  const f = F();
+  const fIdx = getExposureKeyframeIndex(S.frameIdx);
+  const f = F(fIdx);
   f._hist = f._hist.slice(0, f._histIdx + 1);
-  f._hist.push(cloneFrameObjects(S.frameIdx));
+  f._hist.push(cloneFrameObjects(fIdx));
   if (f._hist.length > 100) f._hist.shift(); else f._histIdx = f._hist.length - 1;
 }
 function restoreSnapshot(fi) {
@@ -1147,20 +1147,22 @@ function syncUI() {
   if (ps) ps.style.display = (S.pressureSens && S.tool === 'brush') ? '' : 'none';
 }
 function undo() {
-  const f = S.frames[S.frameIdx];
+  const fIdx = getExposureKeyframeIndex(S.frameIdx);
+  const f = S.frames[fIdx];
   if (!f || f._histIdx <= 0) return;
   f._histIdx--;
-  restoreSnapshot(S.frameIdx);
+  restoreSnapshot(fIdx);
   syncUI(); updateObjPanel();
   dirtyCache(); S.tlDirty = true;
   fullRender(); updateLayerUI();
 }
 
 function redo() {
-  const f = S.frames[S.frameIdx];
+  const fIdx = getExposureKeyframeIndex(S.frameIdx);
+  const f = S.frames[fIdx];
   if (!f || f._histIdx >= f._hist.length - 1) return;
   f._histIdx++;
-  restoreSnapshot(S.frameIdx);
+  restoreSnapshot(fIdx);
   syncUI(); updateObjPanel();
   dirtyCache(); S.tlDirty = true;
   fullRender(); updateLayerUI();
@@ -1211,14 +1213,17 @@ function startDraw(e) {
   try { canvas.setPointerCapture(e.pointerId); } catch(_) {}
 
   if (['brush', 'pencil', 'eraser', 'guide'].includes(S.tool)) {
-    const pressure = S.pressureSens ? pressureCurve(e.pressure || 0.5) : undefined;
+    const pressure = S.pressureSens ? pressureCurve(e.pressure || 0.5) : 0.5;
     S.curStroke = {
-      pts: [{ x: p.x, y: p.y, ...(pressure !== undefined ? { p: pressure } : {}) }],
+      pts: [{ x: p.x, y: p.y, p: pressure }],
       color: S.tool === 'guide' ? '#4fc3f7' : S.stroke,
       size: S.tool === 'pencil' ? 1 : (S.tool === 'guide' ? 2 : S.size),
       opacity: S.tool === 'guide' ? 0.6 : S.opacity,
       composite: S.tool === 'eraser' ? 'destination-out' : 'source-over',
+      thinning: S.thinning,
+      smoothing: S.smoothing,
       isGuide: S.tool === 'guide',
+      simulatePressure: S.pressureSens && e.pointerType === 'mouse',
     };
     render();
   }
@@ -1244,9 +1249,15 @@ function draw(e) {
   if (['brush', 'pencil', 'eraser', 'guide'].includes(S.tool)) {
       if (S.curStroke) {
         const last = S.curStroke.pts[S.curStroke.pts.length - 1];
-        if (S.spacing > 0 && last && S.tool !== 'guide') {
+        if (last && S.tool !== 'guide') {
           const dx = p.x - last.x, dy = p.y - last.y;
-          if (dx * dx + dy * dy < S.spacing * S.spacing) { S.lx = p.x; S.ly = p.y; return; }
+          const minSp = S.tool === 'brush' ? 1.5 : 0.5;
+          const spacingVal = S.spacing || 0;
+          // Apply zoom correction to spacing threshold so drawing density is consistent in screen pixels
+          const f = S.frames[S.frameIdx];
+          const totalZoom = S.zoom * ((f && f.cam) ? f.cam.zoom : 1);
+          const limit = Math.max(minSp, spacingVal) / totalZoom;
+          if (dx * dx + dy * dy < limit * limit) { return; }
         }
         
         let nx = p.x, ny = p.y;
@@ -1256,8 +1267,8 @@ function draw(e) {
           ny = last.y + (p.y - last.y) * alpha;
         }
 
-        const pressure = S.pressureSens ? pressureCurve(e.pressure || 0.5) : undefined;
-        S.curStroke.pts.push({ x: nx, y: ny, ...(pressure !== undefined ? { p: pressure } : {}) });
+        const pressure = S.pressureSens ? pressureCurve(e.pressure || 0.5) : 0.5;
+        S.curStroke.pts.push({ x: nx, y: ny, p: pressure });
         renderOverlay();
       }
       S.lx = p.x; S.ly = p.y;
@@ -1293,8 +1304,11 @@ function endDraw(e) {
       S.curStroke.pts = smoothPath(S.curStroke.pts, iterations, true);
       
       // Auto-simplify to reduce point count drastically without losing shape
-      const epsilon = 1.0 + (S.smoothing * 1.5); // more smoothing = higher simplification
-      S.curStroke.pts = simplifyPath(S.curStroke.pts, epsilon);
+      // DO NOT SIMPLIFY IF USING PERFECT-FREEHAND (brush/eraser) as it makes it jagged
+      if (S.tool !== 'brush' && S.tool !== 'eraser') {
+        const epsilon = 1.0 + (S.smoothing * 1.5); // more smoothing = higher simplification
+        S.curStroke.pts = simplifyPath(S.curStroke.pts, epsilon);
+      }
     }
     
     // Auto-smooth: convert rough freehand to clean bezier curves
@@ -2007,7 +2021,7 @@ function doFill(c) {
           const subs = o.subs && o.subs.length ? o.subs : (o.pts ? [{ pts: o.pts, size: o.size, color: o.color, opacity }] : []);
           for (const sub of subs) {
             const sz = sub.size !== undefined ? sub.size : o.size;
-            drawStroke(wc, sub.pts, sub.color || o.color, sz, 1, 'source-over');
+            drawStroke(wc, sub.pts, sub.color || o.color, sz, 1, 'source-over', o.thinning, o.smoothing, o.simulatePressure);
           }
         } else if (o.type === 'rect' || o.type === 'circle' || o.type === 'line') {
           drawShape(wc, o.type, o.x1, o.y1, o.x2, o.y2, o.color, o.fillColor, o.size, opacity);
@@ -2051,7 +2065,7 @@ function doFill(c) {
           }
           wc.restore();
         } else if (o.type === 'pen' && o.pts) {
-          drawStroke(wc, o.pts, o.color, o.size, 1, 'source-over');
+          drawStroke(wc, o.pts, o.color, o.size, 1, 'source-over', o.thinning, o.smoothing, o.simulatePressure);
         } else if (o.type === 'group' && o.children) {
           const hasTx = hasTransform(o) || o.angle;
           if (hasTx) {
@@ -2081,7 +2095,7 @@ function doFill(c) {
       }
     }
     
-    renderWallObjs(f.o[layer.id] || []);
+    renderWallObjs(obs(S.frameIdx, layer.id));
   }
 
   // 2. Extract pixel data
@@ -2095,7 +2109,33 @@ function doFill(c) {
 
   // If clicking on a wall pixel, bail
   const seedIdx = (sy * w + sx) * 4;
-  if (wd[seedIdx + 3] > WALL_TOL) return;
+  // 2.5 Gap closing - virtual walls
+  const closeGaps = S.closeGaps || 0;
+  const vWall = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    if (wd[i * 4 + 3] > WALL_TOL) vWall[i] = 1;
+  }
+  
+  if (closeGaps > 0) {
+    const vWallNew = new Uint8Array(vWall);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (vWall[y * w + x] === 1) {
+          for (let dy = -closeGaps; dy <= closeGaps; dy++) {
+            for (let dx = -closeGaps; dx <= closeGaps; dx++) {
+              if (dx * dx + dy * dy <= closeGaps * closeGaps) {
+                const ny = y + dy, nx = x + dx;
+                if (ny >= 0 && ny < h && nx >= 0 && nx < w) {
+                  vWallNew[ny * w + nx] = 1;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (let i = 0; i < w * h; i++) vWall[i] = vWallNew[i];
+  }
 
   // 3. Flood fill using alpha mask as wall boundary
   const filled = new Uint8Array(w * h);
@@ -2112,7 +2152,7 @@ function doFill(c) {
     }
     const idx = y * w + x;
     if (filled[idx]) continue;
-    if (wd[idx * 4 + 3] > WALL_TOL) continue;
+    if (vWall[idx] === 1) continue; // Use virtual wall instead of direct wd array
     filled[idx] = 1;
     for (const [dx, dy] of dirs) stack.push([x + dx, y + dy]);
   }
@@ -2123,7 +2163,9 @@ function doFill(c) {
 
   // 4. Dilate to cover anti-aliased edge pixels (more passes = less gaps)
   const DILATE_TOL = Math.min(250, Math.max(200, WALL_TOL + 50));
-  for (let iter = 0; iter < 6; iter++) {
+  // Add extra dilation passes if gap closing was used, to fill the temporary virtual walls
+  const passes = 6 + (closeGaps > 0 ? closeGaps : 0);
+  for (let iter = 0; iter < passes; iter++) {
     const tmpF = new Uint8Array(filled);
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
@@ -2330,8 +2372,7 @@ function clearAutoSave() {
 
 
 function frameHash(fi, layerId) {
-  const f = S.frames[fi];
-  return f ? frameHashContent(f.o[layerId] || []) : 'empty';
+  return frameHashContent(obs(fi, layerId));
 }
 function frameHashContent(objs) {
   if (!objs || !objs.length) return 'empty';
@@ -3460,39 +3501,31 @@ function updateTL() {
 
     for (let i = 0; i < nf; i++) {
       const f = S.frames[i];
-      const objs = f ? (f.o[l.id] || []) : [];
-      const hasContent = objs.length > 0;
       const isKey = f ? f.key : false;
-
-      // Determine if this frame is extended (same content as previous)
-      let isExtended = false;
-      if (!isKey && f && i > 0) {
-        const prevF = S.frames[i - 1];
-        const prevObjs = prevF ? (prevF.o[l.id] || []) : [];
-        const prevHash = prevObjs.length > 0 ? frameHashContent(prevObjs) : 'empty';
-        const currHash = objs.length > 0 ? frameHashContent(objs) : 'empty';
-        isExtended = currHash === prevHash;
-      }
+      const hasUniqueContent = f && f.o[l.id] && f.o[l.id].length > 0;
+      
+      const targetFi = getExposureKeyframeIndexFor(S.frames, i);
+      const parentF = S.frames[targetFi];
+      const hasParentContent = parentF && parentF.o[l.id] && parentF.o[l.id].length > 0;
 
       const cell = document.createElement('div');
       cell.className = 'tl-frame-cell';
       cell.style.width = cellW() + 'px';
       cell.dataset.frame = i;
 
-      if (isKey && hasContent) {
-        cell.classList.add('keyframe');
-      } else if (isKey && !hasContent) {
-        cell.classList.add('blank-key');
-      } else if (isExtended) {
-        if (hasContent) {
-          cell.classList.add('extended');
+      let cellType = 'empty';
+      if (isKey) {
+        cellType = hasUniqueContent ? 'keyframe' : 'blank-key';
+      } else {
+        if (hasUniqueContent) {
+          cellType = 'tween';
         } else {
-          cell.classList.add('extended-blank');
+          cellType = hasParentContent ? 'extended' : 'extended-blank';
         }
-      } else if (!isKey && hasContent) {
-        // This is an interpolated tween frame
-        cell.classList.add('tween');
-        // Add an arrow hint inside the tween cell to look like Adobe Animate
+      }
+      cell.classList.add(cellType);
+
+      if (cellType === 'tween') {
         const arrow = document.createElement('div');
         arrow.style.position = 'absolute';
         arrow.style.top = '50%';
@@ -3503,8 +3536,6 @@ function updateTL() {
         arrow.style.pointerEvents = 'none';
         arrow.innerHTML = '→';
         cell.appendChild(arrow);
-      } else {
-        cell.classList.add('empty');
       }
 
       // Active frame
@@ -3670,17 +3701,6 @@ document.addEventListener('mouseup', e => {
       for (let i = _tlDrag.from + 1; i < _tlDrag.from + _tlDrag.extent; i++) {
         const f = S.frames[i]; f.key = false;
         f.o = {};
-        for (const [lid, objs] of Object.entries(src.o)) {
-          f.o[lid] = objs.map(o => {
-            if (o.fc) {
-              const c = document.createElement('canvas');
-              c.width = o.fc.width; c.height = o.fc.height;
-              c.getContext('2d').drawImage(o.fc, 0, 0);
-              return { type: 'fill', fc: c, x: o.x || 0, y: o.y || 0, opacity: o.opacity };
-            }
-            return JSON.parse(JSON.stringify(o, (k, v) => k === 'fc' ? null : v));
-          });
-        }
       }
       S.tlDirty = true;
       fullRender(); saveSnapshot();
@@ -3720,12 +3740,19 @@ function addFrame(onlyActiveLayer, isKeyframe) {
   // Always include the active layer
   if (S.activeLayerId != null) targetLayers.add(S.activeLayerId);
   console.log(`[addFrame] activeLayerId: ${S.activeLayerId}, targetLayers:`, [...targetLayers], 'isKeyframe:', isKeyframe);
-  for (const lid of targetLayers) {
-    nf.o[lid] = src.o[lid] ? src.o[lid].map(o => cloneObj(o, true)) : [];
+  if (isKeyframe) {
+    for (const lid of targetLayers) {
+      nf.o[lid] = src.o[lid] ? src.o[lid].map(o => cloneObj(o, true)) : [];
+    }
   }
   const insertAt = S.frameIdx + 1;
   S.frames.splice(insertAt, 0, nf);
   S.frameIdx++;
+  
+  if (S.frames.length > 0 && !S.frames[0].key) {
+    S.frames[0].key = true;
+  }
+
   saveSnapshot();
   dirtyCache(); S.tlDirty = true;
   fullRender();
@@ -3791,7 +3818,8 @@ function goFrame(i) {
 }
 
 function clearFrame() {
-  const f = S.frames[S.frameIdx];
+  const fIdx = getExposureKeyframeIndex(S.frameIdx);
+  const f = S.frames[fIdx];
   if (!f) return;
   let hadContent = false;
   for (const lid of S.selLayerIds) {
@@ -4996,7 +5024,7 @@ if (tlFrameRows) {
     }
     items.push({ sep: true });
     if (!multi) {
-      items.push({ label: S.frames[idx] && S.frames[idx].key ? 'Remove Keyframe' : 'Add Keyframe', action: () => { saveSnapshot(); if (S.frames[idx]) { S.frames[idx].key = !S.frames[idx].key; } S.tlDirty = true; fullRender(); } });
+      items.push({ label: S.frames[idx] && S.frames[idx].key ? 'Remove Keyframe' : 'Add Keyframe', action: () => { saveSnapshot(); toggleKeyframe(idx); S.tlDirty = true; fullRender(); } });
       items.push({ sep: true });
     }
     items.push({ label: 'Duplicate Frame', shortcut: 'F5', action: () => { S.frameIdx = idx; dupFrame(); } });
@@ -5004,7 +5032,7 @@ if (tlFrameRows) {
     if (!multi) items.push({ label: 'Clear Frame', shortcut: 'Shift+F7', action: () => { S.frameIdx = idx; clearFrame(); } });
     if (multi) {
       items.push({ label: 'Delete Selected Frames', action: () => { delSelectedFrames(); } });
-      items.push({ label: 'Key Selected Frames', action: () => { saveSnapshot(); for (const fi of _selectedFrames) { if (S.frames[fi]) { S.frames[fi].key = !S.frames[fi].key; } } S.tlDirty = true; fullRender(); } });
+      items.push({ label: 'Key Selected Frames', action: () => { saveSnapshot(); for (const fi of _selectedFrames) { toggleKeyframe(fi); } S.tlDirty = true; fullRender(); } });
     } else {
       items.push({ label: 'Delete Frame', shortcut: 'Shift+F5', action: () => { S.frameIdx = idx; delFrame(); } });
     }
@@ -5036,7 +5064,7 @@ if (tlRuler) {
     if (!multi) items.push({ label: 'Clear Frame', shortcut: 'Shift+F7', action: () => { S.frameIdx = idx; clearFrame(); } });
     if (multi) {
       items.push({ label: 'Delete Selected Frames', action: () => { delSelectedFrames(); } });
-      items.push({ label: 'Key Selected Frames', action: () => { saveSnapshot(); for (const fi of _selectedFrames) { if (S.frames[fi]) { S.frames[fi].key = !S.frames[fi].key; } } S.tlDirty = true; fullRender(); } });
+      items.push({ label: 'Key Selected Frames', action: () => { saveSnapshot(); for (const fi of _selectedFrames) { toggleKeyframe(fi); } S.tlDirty = true; fullRender(); } });
     } else {
       items.push({ label: 'Delete Frame', shortcut: 'Shift+F5', action: () => { S.frameIdx = idx; delFrame(); } });
     }
@@ -5188,10 +5216,10 @@ function setupEvents() {
   });
   // Property controls
   $('prop-size').oninput = e => { 
-    const v = parseInt(e.target.value);
+    const v = Math.max(1, Math.min(100, parseInt(e.target.value) || 1));
     S.size = v; 
-    if ($('brush-size')) $('brush-size').value = e.target.value; 
-    if ($('brush-size-label')) $('brush-size-label').textContent = e.target.value;
+    if ($('brush-size')) $('brush-size').value = v.toString(); 
+    if ($('brush-size-label')) $('brush-size-label').textContent = v.toString();
     const o = selObj();
     if (o) {
       saveSnapshot();
@@ -5202,10 +5230,13 @@ function setupEvents() {
       dirtyCache(); render(); updateObjPanel();
     }
   };
+  $('prop-size').onchange = e => {
+    e.target.value = Math.max(1, Math.min(100, parseInt(e.target.value) || 1));
+  };
   $('prop-opacity').oninput = e => { 
-    const v = parseInt(e.target.value) / 100;
+    const v = Math.max(0, Math.min(100, parseInt(e.target.value) || 0)) / 100;
     S.opacity = v; 
-    if ($('opacity')) $('opacity').value = e.target.value;
+    if ($('opacity')) $('opacity').value = Math.round(v * 100).toString();
     const o = selObj();
     if (o) {
       saveSnapshot();
@@ -5216,15 +5247,30 @@ function setupEvents() {
       dirtyCache(); render(); updateObjPanel();
     }
   };
+  $('prop-opacity').onchange = e => {
+    e.target.value = Math.max(0, Math.min(100, parseInt(e.target.value) || 0));
+  };
   $('prop-smoothness').oninput = e => { 
-    S.smoothness = parseInt(e.target.value); 
-    S.smoothing = parseInt(e.target.value) / 100;
+    const val = Math.max(0, Math.min(100, parseInt(e.target.value) || 0));
+    S.smoothness = val; 
+    S.smoothing = val / 100;
     if ($('smoothing')) {
       $('smoothing').value = S.smoothing;
       $('smoothing-label').textContent = Math.round(S.smoothing * 100) + '%';
     }
   };
-  $('prop-spacing').oninput = e => { S.spacing = parseInt(e.target.value); };
+  $('prop-smoothness').onchange = e => {
+    e.target.value = Math.max(0, Math.min(100, parseInt(e.target.value) || 0));
+  };
+  $('prop-spacing').oninput = e => { S.spacing = Math.max(0, Math.min(20, parseInt(e.target.value) || 0)); };
+  $('prop-spacing').onchange = e => {
+    e.target.value = Math.max(0, Math.min(20, parseInt(e.target.value) || 0));
+  };
+  $('prop-thinning').oninput = e => { S.thinning = Math.max(0, Math.min(100, parseInt(e.target.value) || 0)) / 100; };
+  $('prop-thinning').onchange = e => {
+    e.target.value = Math.max(0, Math.min(100, parseInt(e.target.value) || 0));
+  };
+  $('prop-close-gaps').onchange = e => { S.closeGaps = parseInt(e.target.value); };
   $('prop-pressure').onchange = togglePressure;
   $('prop-pressure').onclick = togglePressure;
   function togglePressure() {
@@ -5251,9 +5297,13 @@ function setupEvents() {
   $('prop-tolerance').oninput = e => { S.fillTolerance = parseFloat(e.target.value); };
   $('prop-auto-smooth').onchange = e => { S.autoSmooth = e.target.checked; };
   $('prop-pixel-snap').onchange = e => { S.pixelSnap = e.target.checked; };
-  // Initial sync: top bar → prop panel
+  // Initial sync: top bar -> prop panel
   $('prop-size').value = $('brush-size').value;
   $('prop-opacity').value = $('opacity').value;
+  if ($('prop-smoothness')) $('prop-smoothness').value = S.smoothness || 0;
+  if ($('prop-spacing')) $('prop-spacing').value = S.spacing || 0;
+  if ($('prop-thinning')) $('prop-thinning').value = Math.round((S.thinning || 0) * 100);
+  if ($('prop-close-gaps')) $('prop-close-gaps').value = S.closeGaps || 0;
   // Sync top bar size/opacity to prop panel and selected objects
   $('brush-size').oninput = e => { 
     const v = parseInt(e.target.value);
@@ -5411,7 +5461,7 @@ function setupEvents() {
   if ($('delete-frame')) $('delete-frame').onclick = delFrame;
   if ($('add-keyframe')) {
     $('add-keyframe').innerHTML = icons.keyframe;
-    $('add-keyframe').onclick = () => { saveSnapshot(); if (S.frames[S.frameIdx]) { S.frames[S.frameIdx].key = !S.frames[S.frameIdx].key; } S.tlDirty = true; fullRender(); };
+    $('add-keyframe').onclick = () => { saveSnapshot(); toggleKeyframe(S.frameIdx); S.tlDirty = true; fullRender(); };
   }
   if ($('tween-btn')) {
     $('tween-btn').innerHTML = icons.tween;
@@ -5471,7 +5521,7 @@ function setupEvents() {
     $('tl-insert-keyframe').innerHTML = icons.tlInsertKeyframe;
     $('tl-insert-keyframe').onclick = () => {
       saveSnapshot();
-      if (S.frames[S.frameIdx]) S.frames[S.frameIdx].key = !S.frames[S.frameIdx].key;
+      toggleKeyframe(S.frameIdx);
       S.tlDirty = true;
       fullRender();
     };
@@ -5518,9 +5568,11 @@ function setupEvents() {
 
   if ($('fps-input')) $('fps-input').onchange = e => {
     saveSnapshot();
-    S.fps = parseInt(e.target.value) || 12;
-    if (S.fps < 1) S.fps = 1;
-    if (S.fps > 120) S.fps = 120;
+    let fps = parseInt(e.target.value) || 12;
+    if (fps < 1) fps = 1;
+    if (fps > 120) fps = 120;
+    S.fps = fps;
+    e.target.value = fps.toString();
     if (S.playing) {
       _startFrameIdx = S.frameIdx;
       _playbackStartTime = performance.now();
@@ -5535,6 +5587,7 @@ function setupEvents() {
       if (fps > 120) fps = 120;
       saveSnapshot();
       S.fps = fps;
+      e.target.value = fps.toString();
       if ($('fps-input')) $('fps-input').value = fps.toString();
       
       if (S.playing) { 
@@ -5552,17 +5605,27 @@ function setupEvents() {
   function setOnion(v) { saveSnapshot(); S.onion = v; if ($('onion-skin')) $('onion-skin').checked = v; if ($('prop-onion')) $('prop-onion').checked = v; dirtyCache(); render(); }
   if ($('onion-skin')) $('onion-skin').onchange = e => setOnion(e.target.checked);
   if ($('prop-onion')) $('prop-onion').onchange = e => setOnion(e.target.checked);
-  if ($('prop-onion-opacity')) $('prop-onion-opacity').oninput = e => {
-    saveSnapshot();
-    S.onionOpacity = parseInt(e.target.value) / 100;
-    if ($('prop-onion-opacity-label')) $('prop-onion-opacity-label').textContent = e.target.value + '%';
-    dirtyCache(); render();
-  };
-  if ($('prop-onion-frames')) $('prop-onion-frames').onchange = e => {
-    saveSnapshot();
-    S.onionFrames = Math.max(1, parseInt(e.target.value) || 1);
-    dirtyCache(); render();
-  };
+  if ($('prop-onion-opacity')) {
+    $('prop-onion-opacity').oninput = e => {
+      saveSnapshot();
+      const val = Math.max(5, Math.min(80, parseInt(e.target.value) || 20));
+      S.onionOpacity = val / 100;
+      if ($('prop-onion-opacity-label')) $('prop-onion-opacity-label').textContent = val + '%';
+      dirtyCache(); render();
+    };
+    $('prop-onion-opacity').onchange = e => {
+      e.target.value = Math.max(5, Math.min(80, parseInt(e.target.value) || 20));
+    };
+  }
+  if ($('prop-onion-frames')) {
+    $('prop-onion-frames').onchange = e => {
+      saveSnapshot();
+      const val = Math.max(1, Math.min(10, parseInt(e.target.value) || 1));
+      S.onionFrames = val;
+      e.target.value = val.toString();
+      dirtyCache(); render();
+    };
+  }
   // Sync property panel onion checkbox with timeline checkbox on init
   if ($('prop-onion')) $('prop-onion').checked = S.onion;
   if ($('prop-onion-opacity')) $('prop-onion-opacity').value = Math.round(S.onionOpacity * 100);
@@ -5818,7 +5881,7 @@ function setupEvents() {
     if (k === 'F5') { e.preventDefault(); dupFrame(); return; }
     if (k === 'F6') { e.preventDefault(); addEmptyFrame(); return; }
     if (k === 'F7' && e.shiftKey) { e.preventDefault(); clearFrame(); return; }
-    if (k === 'F7') { e.preventDefault(); saveSnapshot(); if (S.frames[S.frameIdx]) { S.frames[S.frameIdx].key = !S.frames[S.frameIdx].key; } S.tlDirty = true; fullRender(); return; }
+    if (k === 'F7') { e.preventDefault(); saveSnapshot(); toggleKeyframe(S.frameIdx); S.tlDirty = true; fullRender(); return; }
     if ((k === 'Delete' || k === 'Backspace') && !selObj()) {
       e.preventDefault(); delSelectedFrames(); return;
     }
@@ -5883,7 +5946,7 @@ export function renderSymbolThumb(symId: string, size = 60): HTMLCanvasElement {
     if (child.type === 'stroke') {
       const subs = child.subs && child.subs.length ? child.subs : (child.pts ? [{ pts: child.pts, size: child.size, color: child.color, opacity: child.opacity }] : []);
       for (const sub of subs) {
-        drawStroke(tctx, sub.pts, sub.color || child.color, sub.size !== undefined ? sub.size : child.size, (sub.opacity !== undefined ? sub.opacity : child.opacity) || 1, 'source-over');
+        drawStroke(tctx, sub.pts, sub.color || child.color, sub.size !== undefined ? sub.size : child.size, (sub.opacity !== undefined ? sub.opacity : child.opacity) || 1, 'source-over', child.thinning, child.smoothing, child.simulatePressure);
       }
     } else if (child.type === 'text') {
       tctx.save();
@@ -5902,7 +5965,7 @@ export function renderSymbolThumb(symId: string, size = 60): HTMLCanvasElement {
         for (const gc of children) {
           if (gc.type === 'stroke') {
             const subs = gc.subs && gc.subs.length ? gc.subs : (gc.pts ? [{ pts: gc.pts, size: gc.size, color: gc.color, opacity: gc.opacity }] : []);
-            for (const sub of subs) drawStroke(tctx, sub.pts, sub.color || gc.color, sub.size !== undefined ? sub.size : gc.size, (sub.opacity !== undefined ? sub.opacity : gc.opacity) || 1, 'source-over');
+            for (const sub of subs) drawStroke(tctx, sub.pts, sub.color || gc.color, sub.size !== undefined ? sub.size : gc.size, (sub.opacity !== undefined ? sub.opacity : gc.opacity) || 1, 'source-over', gc.thinning, gc.smoothing, gc.simulatePressure);
           } else if (gc.type === 'fill' && gc.fc) {
             tctx.save(); tctx.translate(gc.x || 0, gc.y || 0); tctx.drawImage(gc.fc, 0, 0); tctx.restore();
           } else if (gc.type === 'fillPath') {
@@ -6254,7 +6317,7 @@ function updateToolProps() {
   }};
   switch (S.tool) {
     case 'brush':
-      title.textContent = 'Brush'; show('size'); show('opacity'); show('smoothness'); show('spacing'); show('pressure'); show('auto-smooth'); show('pixel-snap'); break;
+      title.textContent = 'Brush'; show('size'); show('opacity'); show('smoothness'); show('thinning'); show('spacing'); show('pressure'); show('auto-smooth'); show('pixel-snap'); break;
     case 'pencil':
       title.textContent = 'Pencil'; show('smoothness'); show('pixel-snap'); break;
     case 'eraser':
@@ -6262,7 +6325,7 @@ function updateToolProps() {
     case 'rect': case 'circle': case 'line':
       title.textContent = S.tool.charAt(0).toUpperCase() + S.tool.slice(1); show('size'); show('opacity'); show('pixel-snap'); break;
     case 'fill':
-      title.textContent = 'Fill'; show('tolerance'); break;
+      title.textContent = 'Fill'; show('tolerance'); show('close-gaps'); break;
     case 'select':
       title.textContent = 'Select'; break;
     case 'text':

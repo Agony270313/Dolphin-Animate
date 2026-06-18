@@ -17,7 +17,7 @@ export const S: any = {
   activeLayerId: null, selLayerIds: new Set(),
   rotateReadyCorner: null, rotateReadyMouse: null,
   tlDirty: true,
-  smoothness: 0, spacing: 0, pressureSens: false, pressureCurve: 'soft', pressureExp: 2, pressureMin: 0, mergeMode: true,
+  smoothness: 0, smoothing: 0, spacing: 0, pressureSens: false, pressureCurve: 'soft', pressureExp: 2, pressureMin: 0, mergeMode: true, thinning: 0, closeGaps: 0,
   fillTolerance: 10,
   autoSmooth: false, pixelSnap: false,
   aiHumanizeLevel: 2, // 0: Off, 1: Subtle, 2: Normal, 3: Intense
