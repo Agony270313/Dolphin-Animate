@@ -52,7 +52,11 @@ export const defaultKeybindings: Record<string, string> = {
 export let KeyMap: Record<string, string> = { ...defaultKeybindings };
 try {
   const savedKeys = localStorage.getItem('keybindings');
-  if (savedKeys) KeyMap = { ...defaultKeybindings, ...JSON.parse(savedKeys) };
+  if (savedKeys) {
+    KeyMap = { ...defaultKeybindings, ...JSON.parse(savedKeys) };
+    if (!KeyMap['undo'] || KeyMap['undo'].trim() === '' || KeyMap['undo'] === 'none') KeyMap['undo'] = defaultKeybindings['undo'];
+    if (!KeyMap['redo'] || KeyMap['redo'].trim() === '' || KeyMap['redo'] === 'none') KeyMap['redo'] = defaultKeybindings['redo'];
+  }
 } catch(e) {}
 
 export function showToast(msg: string) {
@@ -75,12 +79,17 @@ export function matchKey(e: KeyboardEvent, shortcut: string): boolean {
   const requiresShift = parts.some(p => p.toLowerCase() === 'shift');
   const requiresAlt = parts.some(p => p.toLowerCase() === 'alt');
 
-  if (e.ctrlKey !== requiresCtrl) return false;
+  const hasCtrl = !!(e.ctrlKey || e.metaKey);
+  if (hasCtrl !== requiresCtrl) return false;
   if (e.shiftKey !== requiresShift) return false;
   if (e.altKey !== requiresAlt) return false;
   
   if (key === ' ' && e.key === ' ') return true;
-  return e.key.toLowerCase() === key.toLowerCase();
+  
+  const isKeyMatch = e.key.toLowerCase() === key.toLowerCase();
+  const isCodeMatch = e.code && e.code.toLowerCase() === ('key' + key).toLowerCase();
+  
+  return isKeyMatch || isCodeMatch;
 }
 
 export function enterIsolationMode(symbolId: string, instanceRef?: {layerId: string, idx: number}) {
@@ -1067,7 +1076,7 @@ function cloneFrameObjects(fi) {
   if (!f) return {};
   const data = {};
   for (const l of S.layers) {
-    data[l.id] = f.o[l.id] ? f.o[l.id].map(cloneObj) : [];
+    data[l.id] = f.o[l.id] ? f.o[l.id].map(o => cloneObj(o, true)) : [];
   }
   return data;
 }
@@ -1083,6 +1092,7 @@ function restoreSnapshot(fi) {
   if (!f) return;
   const entry = f._hist[f._histIdx];
   if (!entry) return;
+  f.o = {};
   for (const [lid, objs] of Object.entries(entry)) {
     const restored = objs.map(o => {
       if (o.fc) {
@@ -2350,7 +2360,7 @@ async function importImage() {
 }
 
 // ---- Auto-save ----
-const AS_KEY = 'yunus_autosave';
+const AS_KEY = 'dolphin_autosave';
 function autoSave() {
   try {
     const data = { w: S.w, h: S.h, bgColor: S.bgColor, bgImgData: S.bgImgData, fps: S.fps, loop: S.loop, layerIdx: S.layerIdx, frameIdx: S.frameIdx };
@@ -4493,7 +4503,7 @@ async function saveProj(saveAs: boolean | Event = false): Promise<boolean> {
   const isSaveAs = saveAs === true;
   let fp = currentProjectPath;
   if (!fp || isSaveAs) {
-    fp = await ipcRenderer.invoke('save-file', { defaultName: 'project.yunus', filters: [{ name: 'Yunus Project', extensions: ['yunus'] }] });
+    fp = await ipcRenderer.invoke('save-file', { defaultName: 'project.dolphin', filters: [{ name: 'Dolphin Project', extensions: ['dolphin'] }] });
   }
   if (!fp) return false;
   currentProjectPath = fp;
@@ -4516,7 +4526,7 @@ async function saveProj(saveAs: boolean | Event = false): Promise<boolean> {
 async function openProj(providedPath?: string): Promise<boolean> {
   let fp = providedPath;
   if (!fp || typeof fp !== 'string') {
-    fp = await ipcRenderer.invoke('open-file', { filters: [{ name: 'Yunus Project', extensions: ['yunus'] }] });
+    fp = await ipcRenderer.invoke('open-file', { filters: [{ name: 'Dolphin Project', extensions: ['dolphin'] }] });
   }
   if (!fp) return false;
   currentProjectPath = fp;
@@ -5747,7 +5757,102 @@ function setupEvents() {
     } catch(err) {}
   });
 
+  let secretInput = '';
+  function activateDeveloperMode() {
+    const notify = document.createElement('div');
+    notify.id = 'dev-notification';
+    notify.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: linear-gradient(135deg, #0f0c1b 0%, #20083c 100%);
+      color: #fff;
+      padding: 30px 50px;
+      border: 3px solid #ec4899;
+      border-radius: 15px;
+      box-shadow: 0 0 35px rgba(236, 72, 153, 0.6);
+      z-index: 100000;
+      font-family: 'Segoe UI', sans-serif;
+      text-align: center;
+      animation: devPop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    `;
+    notify.innerHTML = `
+      <h1 style="margin: 0 0 10px 0; color: #ec4899; font-size: 32px; font-weight: bold; letter-spacing: 2px;">✨ AGONY MODE ACTIVATED ✨</h1>
+      <p style="margin: 0; font-size: 18px; color: #cbd5e1;">Welcome Creator! Mystic developer edition unlocked.</p>
+    `;
+    document.body.appendChild(notify);
+    
+    if (!document.getElementById('dev-style')) {
+      const style = document.createElement('style');
+      style.id = 'dev-style';
+      style.innerHTML = `
+        @keyframes devPop {
+          0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+          100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        }
+        .developer-mode {
+          background: linear-gradient(135deg, #06040a 0%, #120324 100%) !important;
+        }
+        .developer-mode #top-bar {
+          background: linear-gradient(90deg, #6d28d9, #be185d) !important;
+          border-bottom: 2px solid #ec4899 !important;
+        }
+        .developer-mode #tool-panel {
+          background: rgba(6, 4, 10, 0.95) !important;
+          border-right: 2px solid #ec4899 !important;
+        }
+        .developer-mode .tool-btn.active {
+          background-color: #ec4899 !important;
+          box-shadow: 0 0 12px #ec4899 !important;
+          color: #fff !important;
+        }
+        .developer-mode #timeline-panel {
+          background: rgba(6, 4, 10, 0.95) !important;
+          border-top: 2px solid #ec4899 !important;
+        }
+        .developer-mode #properties-panel {
+          background: rgba(6, 4, 10, 0.95) !important;
+          border-left: 2px solid #ec4899 !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    document.body.classList.toggle('developer-mode');
+    
+    const verLabel = document.getElementById('version-label');
+    if (verLabel) {
+      if (document.body.classList.contains('developer-mode')) {
+        verLabel.innerText = 'v2.0.9 [AGONY DEV]';
+        verLabel.style.color = '#ec4899';
+        verLabel.style.fontWeight = 'bold';
+      } else {
+        verLabel.innerText = 'v2.0.9';
+        verLabel.style.color = '';
+        verLabel.style.fontWeight = '';
+      }
+    }
+
+    setTimeout(() => {
+      notify.style.transition = 'opacity 0.5s ease';
+      notify.style.opacity = '0';
+      setTimeout(() => notify.remove(), 500);
+    }, 3000);
+  }
+
   document.addEventListener('keydown', e => {
+    // Check secret developer code (AGONY)
+    if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      secretInput += e.key.toLowerCase();
+      if (secretInput.length > 10) secretInput = secretInput.substring(secretInput.length - 10);
+      if (secretInput.endsWith('agony')) {
+        secretInput = '';
+        activateDeveloperMode();
+        return;
+      }
+    }
+
     // Check if we are focusing an input inside the Settings tab specifically for keybinding
     if ((e.target as HTMLElement).classList && (e.target as HTMLElement).classList.contains('keycap-btn')) {
       e.preventDefault();
