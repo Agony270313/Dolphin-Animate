@@ -5762,86 +5762,217 @@ function setupEvents() {
 
   let secretInput = '';
   function activateDeveloperMode() {
-    const notify = document.createElement('div');
-    notify.id = 'dev-notification';
-    notify.style.cssText = `
+    document.body.classList.toggle('developer-mode');
+    const isDev = document.body.classList.contains('developer-mode');
+    
+    showToast(isDev ? "Developer Mode Enabled [AGONY]" : "Developer Mode Disabled");
+    
+    const existing = document.getElementById('agony-dashboard');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    
+    if (!isDev) return;
+
+    // Create the dashboard overlay panel
+    const dashboard = document.createElement('div');
+    dashboard.id = 'agony-dashboard';
+    dashboard.style.cssText = `
       position: fixed;
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      background: linear-gradient(135deg, #0f0c1b 0%, #20083c 100%);
+      width: 580px;
+      height: 380px;
+      background: rgba(10, 8, 20, 0.96);
+      border: 2px solid #ec4899;
+      border-radius: 12px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.8), 0 0 20px rgba(236,72,153,0.15);
       color: #fff;
-      padding: 30px 50px;
-      border: 3px solid #ec4899;
-      border-radius: 15px;
-      box-shadow: 0 0 35px rgba(236, 72, 153, 0.6);
-      z-index: 100000;
-      font-family: 'Segoe UI', sans-serif;
-      text-align: center;
-      animation: devPop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      font-family: 'Segoe UI', -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      z-index: 999999;
+      overflow: hidden;
+      backdrop-filter: blur(12px);
+      animation: devPop 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     `;
-    notify.innerHTML = `
-      <h1 style="margin: 0 0 10px 0; color: #ec4899; font-size: 32px; font-weight: bold; letter-spacing: 2px;">✨ AGONY MODE ACTIVATED ✨</h1>
-      <p style="margin: 0; font-size: 18px; color: #cbd5e1;">Welcome Creator! Mystic developer edition unlocked.</p>
-    `;
-    document.body.appendChild(notify);
     
+    dashboard.innerHTML = `
+      <div style="background: linear-gradient(90deg, #581c87, #9d174d); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08);">
+        <span style="font-weight: bold; font-size: 14px; letter-spacing: 1.5px; display: flex; align-items: center; gap: 8px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2.5"><path d="m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16"/></svg>
+          DOLPHIN ANIMATE - BETA SANDBOX
+        </span>
+        <button id="close-agony-dash" style="background: none; border: none; color: #888; font-size: 22px; cursor: pointer; line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">&times;</button>
+      </div>
+      
+      <div style="display: flex; flex: 1; overflow: hidden;">
+        <!-- Left Pane: Stats -->
+        <div style="width: 210px; background: rgba(0,0,0,0.25); padding: 20px; border-right: 1px solid rgba(255,255,255,0.06); display: flex; flex-direction: column; gap: 15px;">
+          <h5 style="margin: 0; font-size: 11px; color: #ec4899; letter-spacing: 1px; text-transform: uppercase;">Engine Monitor</h5>
+          <div style="font-size: 13px; display: flex; flex-direction: column; gap: 10px; font-family: Consolas, monospace; color: #cbd5e1;">
+            <div>FPS Rate: <span id="dash-fps" style="color: #38bdf8; font-weight: bold;">--</span></div>
+            <div>Keyframe: <span id="dash-frame" style="color: #fbbf24;">--</span></div>
+            <div>Layers:   <span id="dash-layers" style="color: #34d399;">--</span></div>
+            <div>Selected: <span id="dash-selected" style="color: #a78bfa;">--</span></div>
+            <div>Strokes:  <span id="dash-strokes" style="color: #f472b6;">--</span></div>
+          </div>
+        </div>
+        
+        <!-- Right Pane: Beta Features -->
+        <div style="flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto;">
+          <h5 style="margin: 0; font-size: 11px; color: #ec4899; letter-spacing: 1px; text-transform: uppercase;">Toggle Beta Features</h5>
+          
+          <div style="display: flex; flex-direction: column; gap: 12px; font-size: 13px; color: #e2e8f0;">
+            <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: 6px; border: 1px solid rgba(255,255,255,0.04); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+              <span>Show AI Generator Tool (Beta)</span>
+              <input type="checkbox" id="toggle-beta-ai" style="cursor: pointer; width: 15px; height: 15px; accent-color: #ec4899;">
+            </label>
+            
+            <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: 6px; border: 1px solid rgba(255,255,255,0.04); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+              <span>Show Onion Skin Outlines</span>
+              <input type="checkbox" id="toggle-beta-onion" style="cursor: pointer; width: 15px; height: 15px; accent-color: #ec4899;">
+            </label>
+            
+            <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: 6px; border: 1px solid rgba(255,255,255,0.04); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+              <span>Enable Experimental WebGL Canvas</span>
+              <input type="checkbox" id="toggle-beta-webgl" style="cursor: pointer; width: 15px; height: 15px; accent-color: #ec4899;">
+            </label>
+          </div>
+        </div>
+      </div>
+      
+      <div style="background: rgba(0, 0, 0, 0.3); padding: 8px 20px; font-family: monospace; font-size: 11px; color: #64748b; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; align-items: center;">
+        <span>Status: Sandbox unlocked</span>
+        <span>Version: v2.0.9 [AGONY DEV]</span>
+      </div>
+    `;
+    
+    document.body.appendChild(dashboard);
+    
+    // Close button click
+    document.getElementById('close-agony-dash').onclick = () => {
+      dashboard.remove();
+    };
+    
+    // Setup keycap and animations if not already present
     if (!document.getElementById('dev-style')) {
       const style = document.createElement('style');
       style.id = 'dev-style';
       style.innerHTML = `
         @keyframes devPop {
-          0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0; }
+          0% { transform: translate(-50%, -50%) scale(0.95); opacity: 0; }
           100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
         }
         .developer-mode {
-          background: linear-gradient(135deg, #06040a 0%, #120324 100%) !important;
+          background: linear-gradient(135deg, #050308 0%, #100220 100%) !important;
         }
         .developer-mode #top-bar {
           background: linear-gradient(90deg, #6d28d9, #be185d) !important;
           border-bottom: 2px solid #ec4899 !important;
         }
         .developer-mode #tool-panel {
-          background: rgba(6, 4, 10, 0.95) !important;
+          background: rgba(5, 3, 8, 0.95) !important;
           border-right: 2px solid #ec4899 !important;
         }
         .developer-mode .tool-btn.active {
           background-color: #ec4899 !important;
-          box-shadow: 0 0 12px #ec4899 !important;
+          box-shadow: 0 0 10px #ec4899 !important;
           color: #fff !important;
         }
         .developer-mode #timeline-panel {
-          background: rgba(6, 4, 10, 0.95) !important;
+          background: rgba(5, 3, 8, 0.95) !important;
           border-top: 2px solid #ec4899 !important;
         }
         .developer-mode #properties-panel {
-          background: rgba(6, 4, 10, 0.95) !important;
+          background: rgba(5, 3, 8, 0.95) !important;
           border-left: 2px solid #ec4899 !important;
         }
       `;
       document.head.appendChild(style);
     }
     
-    document.body.classList.toggle('developer-mode');
+    // Auto-Toggle the AI button in UI based on checkbox
+    const aiBtn = document.getElementById('ai-generate-btn');
+    const aiCheckbox = document.getElementById('toggle-beta-ai') as HTMLInputElement;
+    if (aiBtn && aiCheckbox) {
+      aiCheckbox.checked = aiBtn.style.display !== 'none';
+      aiCheckbox.onchange = () => {
+        aiBtn.style.display = aiCheckbox.checked ? 'inline-block' : 'none';
+        showToast(aiCheckbox.checked ? "Beta AI tool unlocked on top bar" : "AI tool disabled");
+      };
+    }
     
-    const verLabel = document.getElementById('version-label');
-    if (verLabel) {
-      if (document.body.classList.contains('developer-mode')) {
-        verLabel.innerText = 'v2.0.9 [AGONY DEV]';
-        verLabel.style.color = '#ec4899';
-        verLabel.style.fontWeight = 'bold';
-      } else {
-        verLabel.innerText = 'v2.0.9';
-        verLabel.style.color = '';
-        verLabel.style.fontWeight = '';
-      }
+    // Simulate other beta settings in global scope
+    const onionCheckbox = document.getElementById('toggle-beta-onion') as HTMLInputElement;
+    if (onionCheckbox) {
+      onionCheckbox.checked = !!(Globals as any).onionBeta;
+      onionCheckbox.onchange = () => {
+        (Globals as any).onionBeta = onionCheckbox.checked;
+        showToast(onionCheckbox.checked ? "Beta Onion skin mode enabled" : "Beta Onion skin disabled");
+        dirtyCache(); fullRender();
+      };
+    }
+    
+    const webglCheckbox = document.getElementById('toggle-beta-webgl') as HTMLInputElement;
+    if (webglCheckbox) {
+      webglCheckbox.checked = !!(Globals as any).webglBeta;
+      webglCheckbox.onchange = () => {
+        (Globals as any).webglBeta = webglCheckbox.checked;
+        showToast(webglCheckbox.checked ? "Experimental WebGL pipeline activated" : "WebGL pipeline deactivated");
+      };
     }
 
-    setTimeout(() => {
-      notify.style.transition = 'opacity 0.5s ease';
-      notify.style.opacity = '0';
-      setTimeout(() => notify.remove(), 500);
-    }, 3000);
+    const verLabel = document.getElementById('version-label');
+    if (verLabel) {
+      verLabel.innerText = 'v2.0.9 [AGONY DEV]';
+      verLabel.style.color = '#ec4899';
+      verLabel.style.fontWeight = 'bold';
+    }
+    
+    // Live update loop for developer engine status metrics
+    let lastTime = performance.now();
+    let frames = 0;
+    let fps = 60;
+    
+    function updateStats() {
+      if (!document.getElementById('agony-dashboard')) return;
+      
+      const now = performance.now();
+      frames++;
+      if (now > lastTime + 1000) {
+        fps = Math.round((frames * 1000) / (now - lastTime));
+        frames = 0;
+        lastTime = now;
+        const fpsEl = document.getElementById('dash-fps');
+        if (fpsEl) fpsEl.innerText = `${fps} FPS`;
+      }
+      
+      const frameEl = document.getElementById('dash-frame');
+      if (frameEl) frameEl.innerText = S.frameIdx.toString();
+      
+      const layersEl = document.getElementById('dash-layers');
+      if (layersEl && S.layers) layersEl.innerText = S.layers.length.toString();
+      
+      const selectedEl = document.getElementById('dash-selected');
+      if (selectedEl) selectedEl.innerText = S.selObjs.length.toString();
+      
+      let totalStrokes = 0;
+      if (S.layers) {
+        for (const l of S.layers) {
+          const objects = obs(S.frameIdx, l.id);
+          if (objects) totalStrokes += objects.length;
+        }
+      }
+      const strokesEl = document.getElementById('dash-strokes');
+      if (strokesEl) strokesEl.innerText = totalStrokes.toString();
+      
+      requestAnimationFrame(updateStats);
+    }
+    
+    requestAnimationFrame(updateStats);
   }
 
   document.addEventListener('keydown', e => {
