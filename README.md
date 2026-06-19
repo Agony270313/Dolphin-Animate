@@ -1,17 +1,37 @@
-# 🐬 Dolphin Animate
+<p align="center">
+  <img src="./assets/dolphin_animate_banner.png" alt="Dolphin Animate Banner" width="100%">
+</p>
 
-A lightweight, free, and open-source 2D frame-by-frame animation software designed for animators, designers, and game developers. Built with Electron and HTML5 Canvas.
+<h3 align="center">Dolphin Animate</h3>
 
-![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Electron](https://img.shields.io/badge/electron-42-blue)
-![Vite](https://img.shields.io/badge/vite-8-purple)
+<p align="center">
+  <strong>A lightweight, free, and open-source 2D frame-by-frame animation software designed for animators, designers, and game developers. Built with Electron and HTML5 Canvas.</strong>
+</p>
+
+<p align="center">
+  <a href="https://agony2703.itch.io/dolphin-animate">
+    <img src="https://itch.io/docs/images/badges/download-badge.png" alt="Download on itch.io">
+  </a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-Windows-lightgrey" alt="Platform">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/electron-42-blue" alt="Electron">
+  <img src="https://img.shields.io/badge/vite-8-purple" alt="Vite">
+</p>
+
+---
 
 Dolphin Animate replicates the classic, intuitive timeline workflow of Macromedia Flash & Adobe Animate without the heavy subscription fee or bloatware.
 
 ---
 
 ## ✨ Key Features
+
+<p align="center">
+  <img src="./assets/dolphin_animate_screenshot.png" alt="Dolphin Animate Editor Screenshot" width="80%">
+</p>
 
 *   **🎬 Classic Flash-Style Timeline:** 
     *   **Frame Spanning (Exposure):** Normal frames share vector data with their parent keyframe, preventing file bloat and redundant memory allocation.
@@ -97,3 +117,10 @@ npm run build
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. Free to use, modify, and distribute for personal or commercial projects.
+
+---
+
+## ⚖️ Disclaimer
+
+Adobe Animate, Macromedia Flash, and related trademarks are the property of Adobe Inc. Dolphin Animate is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Adobe Inc. or any other trademark holder.
+
