@@ -5800,15 +5800,18 @@ function setupEvents() {
     `;
     
     dashboard.innerHTML = `
-      <div style="background: linear-gradient(90deg, #581c87, #9d174d); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08);">
+      <div id="agony-dash-header" style="background: linear-gradient(90deg, #581c87, #9d174d); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.08); cursor: move; user-select: none;">
         <span style="font-weight: bold; font-size: 14px; letter-spacing: 1.5px; display: flex; align-items: center; gap: 8px;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2.5"><path d="m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16"/></svg>
           DOLPHIN ANIMATE - BETA SANDBOX
         </span>
-        <button id="close-agony-dash" style="background: none; border: none; color: #888; font-size: 22px; cursor: pointer; line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">&times;</button>
+        <div style="display: flex; align-items: center; gap: 15px;">
+          <button id="minimize-agony-dash" style="background: none; border: none; color: #888; font-size: 20px; cursor: pointer; line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">−</button>
+          <button id="close-agony-dash" style="background: none; border: none; color: #888; font-size: 22px; cursor: pointer; line-height: 1; transition: color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#888'">&times;</button>
+        </div>
       </div>
       
-      <div style="display: flex; flex: 1; overflow: hidden;">
+      <div id="agony-dash-body" style="display: flex; flex: 1; overflow: hidden;">
         <!-- Left Pane: Stats -->
         <div style="width: 210px; background: rgba(0,0,0,0.25); padding: 20px; border-right: 1px solid rgba(255,255,255,0.06); display: flex; flex-direction: column; gap: 15px;">
           <h5 style="margin: 0; font-size: 11px; color: #ec4899; letter-spacing: 1px; text-transform: uppercase;">Engine Monitor</h5>
@@ -5825,7 +5828,7 @@ function setupEvents() {
         <div style="flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto;">
           <h5 style="margin: 0; font-size: 11px; color: #ec4899; letter-spacing: 1px; text-transform: uppercase;">Toggle Beta Features</h5>
           
-          <div style="display: flex; flex-direction: column; gap: 12px; font-size: 13px; color: #e2e8f0;">
+          <div style="display: flex; flex-direction: column; gap: 10px; font-size: 13px; color: #e2e8f0;">
             <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: 6px; border: 1px solid rgba(255,255,255,0.04); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
               <span>Show AI Generator Tool (Beta)</span>
               <input type="checkbox" id="toggle-beta-ai" style="cursor: pointer; width: 15px; height: 15px; accent-color: #ec4899;">
@@ -5837,14 +5840,21 @@ function setupEvents() {
             </label>
             
             <label style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: 6px; border: 1px solid rgba(255,255,255,0.04); transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
-              <span>Enable Experimental WebGL Canvas</span>
-              <input type="checkbox" id="toggle-beta-webgl" style="cursor: pointer; width: 15px; height: 15px; accent-color: #ec4899;">
+              <span>Show Canvas Grid Overlay</span>
+              <input type="checkbox" id="toggle-beta-grid" style="cursor: pointer; width: 15px; height: 15px; accent-color: #ec4899;">
             </label>
+          </div>
+          
+          <h5 style="margin: 10px 0 0 0; font-size: 11px; color: #ec4899; letter-spacing: 1px; text-transform: uppercase;">Developer Sandbox Tools</h5>
+          
+          <div style="display: flex; gap: 10px;">
+            <button id="btn-stress-test" style="flex: 1; background: #9d174d; border: none; color: #fff; padding: 8px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; transition: background 0.2s;" onmouseover="this.style.background='#be185d'" onmouseout="this.style.background='#9d174d'">Stress Test (500 Rects)</button>
+            <button id="btn-clear-frame" style="flex: 1; background: #374151; border: none; color: #fff; padding: 8px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px; transition: background 0.2s;" onmouseover="this.style.background='#4b5563'" onmouseout="this.style.background='#374151'">Clear Active Frame</button>
           </div>
         </div>
       </div>
       
-      <div style="background: rgba(0, 0, 0, 0.3); padding: 8px 20px; font-family: monospace; font-size: 11px; color: #64748b; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; align-items: center;">
+      <div id="agony-dash-footer" style="background: rgba(0, 0, 0, 0.3); padding: 8px 20px; font-family: monospace; font-size: 11px; color: #64748b; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; align-items: center; user-select: none;">
         <span>Status: Sandbox unlocked</span>
         <span>Version: v2.0.9 [AGONY DEV]</span>
       </div>
@@ -5894,6 +5904,67 @@ function setupEvents() {
       document.head.appendChild(style);
     }
     
+    // Window Dragging Logic
+    const header = document.getElementById('agony-dash-header');
+    let isDragging = false;
+    let startX = 0, startY = 0;
+    let initialLeft = 0, initialTop = 0;
+
+    if (header) {
+      header.addEventListener('mousedown', (e) => {
+        if (e.target === document.getElementById('close-agony-dash') || e.target === document.getElementById('minimize-agony-dash')) return;
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        
+        const rect = dashboard.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+        
+        dashboard.style.transform = 'none';
+        dashboard.style.left = initialLeft + 'px';
+        dashboard.style.top = initialTop + 'px';
+        dashboard.style.margin = '0';
+        
+        e.preventDefault();
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        dashboard.style.left = (initialLeft + dx) + 'px';
+        dashboard.style.top = (initialTop + dy) + 'px';
+      });
+
+      window.addEventListener('mouseup', () => {
+        isDragging = false;
+      });
+    }
+
+    // Window Minimization Logic
+    const minBtn = document.getElementById('minimize-agony-dash');
+    const bodyContent = document.getElementById('agony-dash-body');
+    const footer = document.getElementById('agony-dash-footer');
+    let isMinimized = false;
+
+    if (minBtn && bodyContent && footer) {
+      minBtn.onclick = () => {
+        isMinimized = !isMinimized;
+        if (isMinimized) {
+          bodyContent.style.display = 'none';
+          footer.style.display = 'none';
+          dashboard.style.height = '44px';
+          minBtn.innerHTML = '⤢';
+        } else {
+          bodyContent.style.display = 'flex';
+          footer.style.display = 'flex';
+          dashboard.style.height = '380px';
+          minBtn.innerHTML = '−';
+        }
+      };
+    }
+
     // Auto-Toggle the AI button in UI based on checkbox
     const aiBtn = document.getElementById('ai-generate-btn');
     const aiCheckbox = document.getElementById('toggle-beta-ai') as HTMLInputElement;
@@ -5905,6 +5976,63 @@ function setupEvents() {
       };
     }
     
+    // Show Canvas Grid Overlay (radial dots)
+    const gridCheckbox = document.getElementById('toggle-beta-grid') as HTMLInputElement;
+    if (gridCheckbox && canvas) {
+      gridCheckbox.checked = canvas.style.backgroundImage !== '';
+      gridCheckbox.onchange = () => {
+        if (gridCheckbox.checked) {
+          canvas.style.backgroundImage = 'radial-gradient(circle, rgba(255,255,255,0.15) 1px, transparent 1px)';
+          canvas.style.backgroundSize = '20px 20px';
+        } else {
+          canvas.style.backgroundImage = '';
+        }
+        showToast(gridCheckbox.checked ? "Canvas grid overlay enabled" : "Grid overlay disabled");
+      };
+    }
+    
+    // Stress Test: Generates 500 rectangles on stage to test rendering
+    const stressTestBtn = document.getElementById('btn-stress-test');
+    if (stressTestBtn) {
+      stressTestBtn.onclick = () => {
+        const l = L();
+        if (!l) {
+          showToast("Error: No active layer selected!");
+          return;
+        }
+        saveSnapshot();
+        const objects = obs(S.frameIdx, l.id);
+        for (let i = 0; i < 500; i++) {
+          objects.push({
+            type: 'rect',
+            x1: Math.random() * S.w,
+            y1: Math.random() * S.h,
+            x2: Math.random() * S.w,
+            y2: Math.random() * S.h,
+            stroke: '#ec4899',
+            fill: 'transparent',
+            width: 2
+          });
+        }
+        dirtyCache(); fullRender(); drawSelection();
+        showToast("Stress Test: Added 500 vector rectangles!");
+      };
+    }
+    
+    // Clear Active Frame
+    const clearFrameBtn = document.getElementById('btn-clear-frame');
+    if (clearFrameBtn) {
+      clearFrameBtn.onclick = () => {
+        const l = L();
+        if (!l) return;
+        saveSnapshot();
+        const objects = obs(S.frameIdx, l.id);
+        objects.length = 0;
+        dirtyCache(); fullRender(); drawSelection();
+        showToast("Clear Frame: All vectors removed!");
+      };
+    }
+
     // Simulate other beta settings in global scope
     const onionCheckbox = document.getElementById('toggle-beta-onion') as HTMLInputElement;
     if (onionCheckbox) {
@@ -5913,15 +6041,6 @@ function setupEvents() {
         (Globals as any).onionBeta = onionCheckbox.checked;
         showToast(onionCheckbox.checked ? "Beta Onion skin mode enabled" : "Beta Onion skin disabled");
         dirtyCache(); fullRender();
-      };
-    }
-    
-    const webglCheckbox = document.getElementById('toggle-beta-webgl') as HTMLInputElement;
-    if (webglCheckbox) {
-      webglCheckbox.checked = !!(Globals as any).webglBeta;
-      webglCheckbox.onchange = () => {
-        (Globals as any).webglBeta = webglCheckbox.checked;
-        showToast(webglCheckbox.checked ? "Experimental WebGL pipeline activated" : "WebGL pipeline deactivated");
       };
     }
 
