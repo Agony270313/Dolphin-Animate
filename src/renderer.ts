@@ -32,8 +32,8 @@ export const defaultKeybindings: Record<string, string> = {
   'pen': 'a',
   'guide': 'm',
   'convert_to_symbol': 'F8',
-  'group': 'g',
-  'ungroup': 'Shift+G',
+  'group': 'Ctrl+g',
+  'ungroup': 'Ctrl+Shift+g',
   'copy': 'Ctrl+c',
   'paste': 'Ctrl+v',
   'cut': 'Ctrl+x',
@@ -56,6 +56,9 @@ try {
     KeyMap = { ...defaultKeybindings, ...JSON.parse(savedKeys) };
     if (!KeyMap['undo'] || KeyMap['undo'].trim() === '' || KeyMap['undo'] === 'none') KeyMap['undo'] = defaultKeybindings['undo'];
     if (!KeyMap['redo'] || KeyMap['redo'].trim() === '' || KeyMap['redo'] === 'none') KeyMap['redo'] = defaultKeybindings['redo'];
+    // Auto-fix conflicting old defaults for group/ungroup if they are still using 'g' / 'Shift+G'
+    if (KeyMap['group'] === 'g') KeyMap['group'] = 'Ctrl+g';
+    if (KeyMap['ungroup'] === 'Shift+G' || KeyMap['ungroup'] === 'Shift+g') KeyMap['ungroup'] = 'Ctrl+Shift+g';
   }
 } catch(e) {}
 
